@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 /// Compares two types structurally to determine if they're compatible
 fn isTypeCompatible(comptime T1: type, comptime T2: type) bool {
@@ -417,7 +418,7 @@ pub fn Interface(comptime methods: anytype, comptime embedded: anytype) type {
         }
 
         fn formatIncompatibility(incompatibility: Incompatibility) []const u8 {
-            const indent = "   └─ ";
+            const indent = if (builtin.os.tag == .windows) "   \\- " else "   └─ ";
             return switch (incompatibility) {
                 .missing_method => |method| std.fmt.comptimePrint("Missing required method: {s}\n{s}Add the method with the correct signature to your implementation", .{ method, indent }),
 
