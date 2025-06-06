@@ -12,6 +12,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        zig-version: ["0.14.1"]
 
     steps:
       - uses: actions/checkout@v3
@@ -19,7 +20,7 @@ jobs:
       - name: Install Zig
         uses: goto-bus-stop/setup-zig@v2
         with:
-          version: 0.13.0
+          version: ${{ matrix.zig-version }}
 
       - name: Check Zig Version
         run: zig version
