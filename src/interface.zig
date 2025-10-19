@@ -329,13 +329,12 @@ pub fn Interface(comptime methods: anytype, comptime embedded: anytype) type {
                 return Expected == Actual;
             }
 
-            if (exp_info.error_union.error_set == anyerror) {
-                return exp_info.error_union.payload == act_info.error_union.payload;
-            }
-            return Expected == Actual;
+            // Any error union in the interface accepts any error set in the implementation
+            // We only care that the payload types match
+            return exp_info.error_union.payload == act_info.error_union.payload;
         }
 
-        pub fn incompatibilities(comptime Type: type) []const Incompatibility {
+        pub fn incompatibilities(comptime ImplType: type) []const Incompatibility {
             comptime {
                 var problems: []const Incompatibility = &.{};
 
@@ -356,29 +355,34 @@ pub fn Interface(comptime methods: anytype, comptime embedded: anytype) type {
 
                 // Check primary interface methods
                 for (std.meta.fields(@TypeOf(methods))) |field| {
-                    if (!@hasDecl(Type, field.name)) {
+                    if (!@hasDecl(ImplType, field.name)) {
                         problems = problems ++ &[_]Incompatibility{.{
                             .missing_method = field.name,
                         }};
                         continue;
                     }
 
-                    const impl_fn = @TypeOf(@field(Type, field.name));
+                    const impl_fn = @TypeOf(@field(ImplType, field.name));
                     const expected_fn = @field(methods, field.name);
 
                     const impl_info = @typeInfo(impl_fn).@"fn";
                     const expected_info = @typeInfo(expected_fn).@"fn";
 
-                    if (impl_info.params.len != expected_info.params.len) {
+                    // Implementation has self parameter, interface signature doesn't
+                    // So impl should have expected.len + 1 params
+                    const expected_param_count = expected_info.params.len + 1;
+
+                    if (impl_info.params.len != expected_param_count) {
                         problems = problems ++ &[_]Incompatibility{.{
                             .wrong_param_count = .{
                                 .method = field.name,
-                                .expected = expected_info.params.len,
+                                .expected = expected_param_count,
                                 .got = impl_info.params.len,
                             },
                         }};
                     } else {
-                        for (impl_info.params[1..], expected_info.params[1..], 0..) |impl_param, expected_param, i| {
+                        // Compare impl params[1..] (skip self) with interface params[0..]
+                        for (impl_info.params[1..], expected_info.params, 0..) |impl_param, expected_param, i| {
                             if (!isTypeCompatible(impl_param.type.?, expected_param.type.?)) {
                                 problems = problems ++ &[_]Incompatibility{.{
                                     .param_type_mismatch = .{
@@ -407,7 +411,7 @@ pub fn Interface(comptime methods: anytype, comptime embedded: anytype) type {
                 if (has_embeds) {
                     for (std.meta.fields(@TypeOf(embedded_interfaces))) |embed_field| {
                         const embed = @field(embedded_interfaces, embed_field.name);
-                        const embed_problems = embed.incompatibilities(Type);
+                        const embed_problems = embed.incompatibilities(ImplType);
                         problems = problems ++ embed_problems;
                     }
                 }
@@ -453,15 +457,15 @@ pub fn Interface(comptime methods: anytype, comptime embedded: anytype) type {
             };
         }
 
-        pub fn satisfiedBy(comptime Type: type) void {
+        pub fn satisfiedBy(comptime ImplType: type) void {
             comptime {
-                const problems = incompatibilities(Type);
+                const problems = incompatibilities(ImplType);
                 if (problems.len > 0) {
                     const title = "Type '{s}' does not implement interface '{s}':\n";
 
                     // First compute the total size needed for our error message
                     var total_len: usize = std.fmt.count(title, .{
-                        @typeName(Type),
+                        @typeName(ImplType),
                         name,
                     });
 
@@ -475,7 +479,7 @@ pub fn Interface(comptime methods: anytype, comptime embedded: anytype) type {
                     var written: usize = 0;
 
                     written += (std.fmt.bufPrint(errors[written..], title, .{
-                        @typeName(Type),
+                        @typeName(ImplType),
                         name,
                     }) catch unreachable).len;
 
@@ -488,16 +492,301 @@ pub fn Interface(comptime methods: anytype, comptime embedded: anytype) type {
                 }
             }
         }
+
+        /// Generates a VTable-based runtime type that enables runtime polymorphism.
+        /// Returns a type that can store any implementation of this interface with type erasure.
+        ///
+        /// The generated type has:
+        /// - `ptr`: *anyopaque pointer to the implementation
+        /// - `vtable`: *const VTable with function pointers
+        /// - `init()`: creates wrapper from implementation pointer and vtable (for manual usage)
+        /// - `from()`: auto-generates VTable wrappers and creates wrapper (recommended)
+        ///
+        /// Methods are called through the vtable: `interface.vtable.methodName(interface.ptr, args...)`
+        ///
+        /// Example:
+        /// ```zig
+        /// const IWriter = Writer.Type();
+        ///
+        /// const MyWriter = struct {
+        ///     pub fn write(self: *MyWriter, data: []const u8) !usize {
+        ///         // implementation
+        ///     }
+        /// };
+        ///
+        /// var writer = MyWriter{};
+        /// const iwriter = IWriter.from(&writer);  // Auto-generated wrappers!
+        /// ```
+        pub fn Type() type {
+            comptime {
+                // Generate VTable type with function pointers
+                const VTableType = generateVTableType();
+
+                return struct {
+                    ptr: *anyopaque,
+                    vtable: *const VTableType,
+
+                    pub const VTable = VTableType;
+
+                    /// Creates an interface wrapper from an implementation pointer and vtable.
+                    ///
+                    /// The implementation type is validated at compile time to ensure it satisfies
+                    /// the interface requirements.
+                    ///
+                    /// Params:
+                    ///   impl: Pointer to the concrete implementation
+                    ///   vtable: Pointer to the VTable with wrapper functions
+                    pub fn init(impl: anytype, vtable: *const VTableType) @This() {
+                        const ImplPtr = @TypeOf(impl);
+                        const impl_type_info = @typeInfo(ImplPtr);
+
+                        // Verify it's a pointer
+                        if (impl_type_info != .pointer) {
+                            @compileError("init() requires a pointer to an implementation, got: " ++ @typeName(ImplPtr));
+                        }
+
+                        const ImplType = impl_type_info.pointer.child;
+
+                        // Validate that the type satisfies the interface at compile time
+                        comptime Self.satisfiedBy(ImplType);
+
+                        return .{
+                            .ptr = impl,
+                            .vtable = vtable,
+                        };
+                    }
+
+                    /// Automatically generates VTable wrappers and creates an interface wrapper.
+                    /// This eliminates the need to manually write *Impl wrapper functions.
+                    ///
+                    /// The wrappers are generated at compile time and cached per implementation type,
+                    /// so there's no runtime overhead compared to manual wrappers.
+                    ///
+                    /// Params:
+                    ///   impl: Pointer to the implementation instance
+                    ///
+                    /// Example:
+                    /// ```zig
+                    /// var pause_state = PauseState{};
+                    /// const state = IState.from(&pause_state);
+                    /// state.vtable.update(state.ptr, 0.16);
+                    /// ```
+                    pub fn from(impl: anytype) @This() {
+                        const ImplPtr = @TypeOf(impl);
+                        const impl_type_info = @typeInfo(ImplPtr);
+
+                        // Verify it's a pointer
+                        if (impl_type_info != .pointer) {
+                            @compileError("from() requires a pointer to an implementation, got: " ++ @typeName(ImplPtr));
+                        }
+
+                        const ImplType = impl_type_info.pointer.child;
+
+                        // Validate that the type satisfies the interface at compile time
+                        comptime Self.satisfiedBy(ImplType);
+
+                        // Generate a unique wrapper struct with static VTable for this ImplType
+                        // The compiler memoizes this, so each ImplType gets exactly one instance
+                        const gen = struct {
+                            fn generateWrapperForField(comptime T: type, comptime vtable_field: std.builtin.Type.StructField) *const anyopaque {
+                                // Extract function signature from vtable field
+                                const fn_ptr_info = @typeInfo(vtable_field.type);
+                                const fn_info = @typeInfo(fn_ptr_info.pointer.child).@"fn";
+                                const method_name = vtable_field.name;
+
+                                // Check if the implementation method expects *T or T
+                                const impl_method_info = @typeInfo(@TypeOf(@field(T, method_name)));
+                                const impl_fn_info = impl_method_info.@"fn";
+                                const first_param_info = @typeInfo(impl_fn_info.params[0].type.?);
+                                const expects_pointer = first_param_info == .pointer;
+
+                                // Generate wrapper matching the exact signature
+                                const param_count = fn_info.params.len;
+                                if (param_count < 1 or param_count > 5) {
+                                    @compileError("Method '" ++ method_name ++ "' has " ++ @typeName(@TypeOf(param_count)) ++ " parameters. Only 1-5 parameters (including self pointer) are supported.");
+                                }
+
+                                // Create wrapper with exact parameter types from VTable signature
+                                if (expects_pointer) {
+                                    return switch (param_count) {
+                                        1 => &struct {
+                                            fn wrapper(ptr: *anyopaque) callconv(fn_info.calling_convention) fn_info.return_type.? {
+                                                const self: *T = @ptrCast(@alignCast(ptr));
+                                                return @field(T, method_name)(self);
+                                            }
+                                        }.wrapper,
+                                        2 => &struct {
+                                            fn wrapper(ptr: *anyopaque, p1: fn_info.params[1].type.?) callconv(fn_info.calling_convention) fn_info.return_type.? {
+                                                const self: *T = @ptrCast(@alignCast(ptr));
+                                                return @field(T, method_name)(self, p1);
+                                            }
+                                        }.wrapper,
+                                        3 => &struct {
+                                            fn wrapper(ptr: *anyopaque, p1: fn_info.params[1].type.?, p2: fn_info.params[2].type.?) callconv(fn_info.calling_convention) fn_info.return_type.? {
+                                                const self: *T = @ptrCast(@alignCast(ptr));
+                                                return @field(T, method_name)(self, p1, p2);
+                                            }
+                                        }.wrapper,
+                                        4 => &struct {
+                                            fn wrapper(ptr: *anyopaque, p1: fn_info.params[1].type.?, p2: fn_info.params[2].type.?, p3: fn_info.params[3].type.?) callconv(fn_info.calling_convention) fn_info.return_type.? {
+                                                const self: *T = @ptrCast(@alignCast(ptr));
+                                                return @field(T, method_name)(self, p1, p2, p3);
+                                            }
+                                        }.wrapper,
+                                        5 => &struct {
+                                            fn wrapper(ptr: *anyopaque, p1: fn_info.params[1].type.?, p2: fn_info.params[2].type.?, p3: fn_info.params[3].type.?, p4: fn_info.params[4].type.?) callconv(fn_info.calling_convention) fn_info.return_type.? {
+                                                const self: *T = @ptrCast(@alignCast(ptr));
+                                                return @field(T, method_name)(self, p1, p2, p3, p4);
+                                            }
+                                        }.wrapper,
+                                        else => unreachable,
+                                    };
+                                } else {
+                                    return switch (param_count) {
+                                        1 => &struct {
+                                            fn wrapper(ptr: *anyopaque) callconv(fn_info.calling_convention) fn_info.return_type.? {
+                                                const self: *T = @ptrCast(@alignCast(ptr));
+                                                return @field(T, method_name)(self.*);
+                                            }
+                                        }.wrapper,
+                                        2 => &struct {
+                                            fn wrapper(ptr: *anyopaque, p1: fn_info.params[1].type.?) callconv(fn_info.calling_convention) fn_info.return_type.? {
+                                                const self: *T = @ptrCast(@alignCast(ptr));
+                                                return @field(T, method_name)(self.*, p1);
+                                            }
+                                        }.wrapper,
+                                        3 => &struct {
+                                            fn wrapper(ptr: *anyopaque, p1: fn_info.params[1].type.?, p2: fn_info.params[2].type.?) callconv(fn_info.calling_convention) fn_info.return_type.? {
+                                                const self: *T = @ptrCast(@alignCast(ptr));
+                                                return @field(T, method_name)(self.*, p1, p2);
+                                            }
+                                        }.wrapper,
+                                        4 => &struct {
+                                            fn wrapper(ptr: *anyopaque, p1: fn_info.params[1].type.?, p2: fn_info.params[2].type.?, p3: fn_info.params[3].type.?) callconv(fn_info.calling_convention) fn_info.return_type.? {
+                                                const self: *T = @ptrCast(@alignCast(ptr));
+                                                return @field(T, method_name)(self.*, p1, p2, p3);
+                                            }
+                                        }.wrapper,
+                                        5 => &struct {
+                                            fn wrapper(ptr: *anyopaque, p1: fn_info.params[1].type.?, p2: fn_info.params[2].type.?, p3: fn_info.params[3].type.?, p4: fn_info.params[4].type.?) callconv(fn_info.calling_convention) fn_info.return_type.? {
+                                                const self: *T = @ptrCast(@alignCast(ptr));
+                                                return @field(T, method_name)(self.*, p1, p2, p3, p4);
+                                            }
+                                        }.wrapper,
+                                        else => unreachable,
+                                    };
+                                }
+                            }
+
+                            const vtable: VTableType = blk: {
+                                var result: VTableType = undefined;
+                                // Iterate over all VTable fields (includes embedded interface methods)
+                                for (std.meta.fields(VTableType)) |vtable_field| {
+                                    const wrapper_ptr = generateWrapperForField(ImplType, vtable_field);
+                                    @field(result, vtable_field.name) = @ptrCast(@alignCast(wrapper_ptr));
+                                }
+                                break :blk result;
+                            };
+                        };
+
+                        return .{
+                            .ptr = impl,
+                            .vtable = &gen.vtable,
+                        };
+                    }
+                };
+            }
+        }
+
+        fn generateVTableType() type {
+            comptime {
+                // Build array of struct fields for the VTable
+                var fields: []const std.builtin.Type.StructField = &.{};
+
+                // Helper function to add a method to the VTable
+                const addMethod = struct {
+                    fn add(method_field: std.builtin.Type.StructField, method_fn: anytype, field_list: []const std.builtin.Type.StructField) []const std.builtin.Type.StructField {
+                        const fn_info = @typeInfo(method_fn).@"fn";
+
+                        // Build parameter list: insert *anyopaque as first param (implicit self)
+                        // Interface methods don't include self in their signature
+                        var params: [fn_info.params.len + 1]std.builtin.Type.Fn.Param = undefined;
+                        params[0] = .{
+                            .is_generic = false,
+                            .is_noalias = false,
+                            .type = *anyopaque,
+                        };
+
+                        // Copy all interface parameters after the implicit self
+                        for (fn_info.params, 1..) |param, i| {
+                            params[i] = param;
+                        }
+
+                        // Create function pointer type
+                        const FnType = @Type(.{
+                            .@"fn" = .{
+                                .calling_convention = fn_info.calling_convention,
+                                .is_generic = false,
+                                .is_var_args = false,
+                                .return_type = fn_info.return_type,
+                                .params = &params,
+                            },
+                        });
+
+                        const FnPtrType = *const FnType;
+
+                        // Add field to VTable
+                        return field_list ++ &[_]std.builtin.Type.StructField{.{
+                            .name = method_field.name,
+                            .type = FnPtrType,
+                            .default_value_ptr = null,
+                            .is_comptime = false,
+                            .alignment = @alignOf(FnPtrType),
+                        }};
+                    }
+                }.add;
+
+                // Add methods from embedded interfaces first
+                if (has_embeds) {
+                    for (std.meta.fields(Embeds)) |embed_field| {
+                        const embed = @field(embedded_interfaces, embed_field.name);
+                        // Recursively get the VTable type from the embedded interface
+                        const EmbedVTable = embed.Type().VTable;
+                        for (std.meta.fields(EmbedVTable)) |vtable_field| {
+                            // Get the method signature from the embedded interface's methods
+                            // We need to reconstruct the method from the vtable field
+                            fields = fields ++ &[_]std.builtin.Type.StructField{vtable_field};
+                        }
+                    }
+                }
+
+                // Add methods from primary interface
+                for (std.meta.fields(Methods)) |method_field| {
+                    const method_fn = @field(methods, method_field.name);
+                    fields = addMethod(method_field, method_fn, fields);
+                }
+
+                // Create the VTable struct type
+                return @Type(.{
+                    .@"struct" = .{
+                        .layout = .auto,
+                        .fields = fields,
+                        .decls = &.{},
+                        .is_tuple = false,
+                    },
+                });
+            }
+        }
     };
 }
 
 test "expected usage of embedded interfaces" {
     const Logger = Interface(.{
-        .log = fn (anytype, []const u8) void,
+        .log = fn ([]const u8) void,
     }, .{});
 
     const Writer = Interface(.{
-        .write = fn (anytype, []const u8) anyerror!void,
+        .write = fn ([]const u8) anyerror!void,
     }, .{Logger});
 
     const Implementation = struct {
@@ -519,12 +808,12 @@ test "expected usage of embedded interfaces" {
 
 test "expected failure case of embedded interfaces" {
     const Logger = Interface(.{
-        .log = fn (anytype, []const u8, u8) void,
-        .missing = fn (anytype) void,
+        .log = fn ([]const u8, u8) void,
+        .missing = fn () void,
     }, .{});
 
     const Writer = Interface(.{
-        .write = fn (anytype, []const u8) anyerror!void,
+        .write = fn ([]const u8) anyerror!void,
     }, .{Logger});
 
     const Implementation = struct {
@@ -540,4 +829,226 @@ test "expected failure case of embedded interfaces" {
     };
 
     try std.testing.expect(Writer.incompatibilities(Implementation).len == 2);
+}
+
+test "vtable interface type generation" {
+    const IWriter = Interface(.{
+        .write = fn ([]const u8) anyerror!usize,
+    }, null);
+
+    const Writer = IWriter.Type();
+
+    // Verify the VTable type was generated correctly
+    const VTableType = Writer.VTable;
+    const vtable_fields = std.meta.fields(VTableType);
+
+    try std.testing.expectEqual(@as(usize, 1), vtable_fields.len);
+    try std.testing.expectEqualStrings("write", vtable_fields[0].name);
+}
+
+test "vtable interface runtime usage" {
+    const IWriter = Interface(.{
+        .write = fn ([]const u8) anyerror!usize,
+    }, null);
+
+    const Writer = IWriter.Type();
+
+    const BufferWriter = struct {
+        buffer: std.ArrayList(u8),
+        allocator: std.mem.Allocator,
+
+        pub fn init(allocator: std.mem.Allocator) @This() {
+            return .{
+                .buffer = std.ArrayList(u8){},
+                .allocator = allocator,
+            };
+        }
+
+        pub fn deinit(self: *@This()) void {
+            self.buffer.deinit(self.allocator);
+        }
+
+        pub fn write(self: *@This(), data: []const u8) !usize {
+            try self.buffer.appendSlice(self.allocator, data);
+            return data.len;
+        }
+
+        pub fn getWritten(self: *const @This()) []const u8 {
+            return self.buffer.items;
+        }
+    };
+
+    var buffer_writer = BufferWriter.init(std.testing.allocator);
+    defer buffer_writer.deinit();
+
+    // Create interface wrapper with auto-generated VTable
+    const writer_interface = Writer.from(&buffer_writer);
+
+    // Use through the interface
+    const written = try writer_interface.vtable.write(writer_interface.ptr, "Hello, ");
+    try std.testing.expectEqual(@as(usize, 7), written);
+
+    const written2 = try writer_interface.vtable.write(writer_interface.ptr, "World!");
+    try std.testing.expectEqual(@as(usize, 6), written2);
+
+    // Verify the data was written
+    try std.testing.expectEqualStrings("Hello, World!", buffer_writer.getWritten());
+}
+
+test "state machine with heterogeneous state storage" {
+    // Define State interface
+    const IState = Interface(.{
+        .onEnter = fn () void,
+        .onExit = fn () void,
+        .update = fn (f32) void,
+    }, null);
+
+    // Generate VTable-based runtime type
+    const State = IState.Type();
+
+    // Menu state implementation
+    const MenuState = struct {
+        entered: bool = false,
+        exited: bool = false,
+        updates: u32 = 0,
+
+        pub fn onEnter(self: *@This()) void {
+            self.entered = true;
+        }
+
+        pub fn onExit(self: *@This()) void {
+            self.exited = true;
+        }
+
+        pub fn update(self: *@This(), delta: f32) void {
+            _ = delta;
+            self.updates += 1;
+        }
+    };
+
+    // Gameplay state implementation
+    const GameplayState = struct {
+        score: u32 = 0,
+
+        pub fn onEnter(self: *@This()) void {
+            self.score = 0;
+        }
+
+        pub fn onExit(self: *@This()) void {
+            _ = self;
+        }
+
+        pub fn update(self: *@This(), delta: f32) void {
+            _ = delta;
+            self.score += 10;
+        }
+    };
+
+    // State manager with stack of interface objects
+    const StateManager = struct {
+        stack: std.ArrayList(State),
+        allocator: std.mem.Allocator,
+
+        pub fn init(allocator: std.mem.Allocator) @This() {
+            return .{
+                .stack = std.ArrayList(State){},
+                .allocator = allocator,
+            };
+        }
+
+        pub fn deinit(self: *@This()) void {
+            self.stack.deinit(self.allocator);
+        }
+
+        pub fn pushState(self: *@This(), state: State) !void {
+            try self.stack.append(self.allocator, state);
+            // Call onEnter on the new state
+            const current = &self.stack.items[self.stack.items.len - 1];
+            current.vtable.onEnter(current.ptr);
+        }
+
+        pub fn popState(self: *@This()) void {
+            if (self.stack.items.len > 0) {
+                const current = &self.stack.items[self.stack.items.len - 1];
+                current.vtable.onExit(current.ptr);
+                _ = self.stack.pop();
+            }
+        }
+
+        pub fn update(self: *@This(), delta: f32) void {
+            if (self.stack.items.len > 0) {
+                const current = &self.stack.items[self.stack.items.len - 1];
+                current.vtable.update(current.ptr, delta);
+            }
+        }
+    };
+
+    // Test the state machine
+    var menu = MenuState{};
+    var gameplay = GameplayState{};
+
+    var manager = StateManager.init(std.testing.allocator);
+    defer manager.deinit();
+
+    // Push menu state - auto-generated VTable wrappers!
+    try manager.pushState(State.from(&menu));
+    try std.testing.expect(menu.entered);
+    try std.testing.expectEqual(@as(u32, 0), menu.updates);
+
+    // Update menu state
+    manager.update(0.016);
+    try std.testing.expectEqual(@as(u32, 1), menu.updates);
+
+    // Push gameplay state - auto-generated VTable wrappers!
+    try manager.pushState(State.from(&gameplay));
+    try std.testing.expectEqual(@as(u32, 0), gameplay.score);
+
+    // Update gameplay state
+    manager.update(0.016);
+    try std.testing.expectEqual(@as(u32, 10), gameplay.score);
+
+    // Pop back to menu
+    manager.popState();
+    manager.update(0.016);
+    try std.testing.expectEqual(@as(u32, 2), menu.updates);
+}
+
+test "error union compatibility" {
+    // Interface with anyerror union
+    const Fallible = Interface(.{
+        .doWork = fn (u32) anyerror!void,
+    }, null);
+
+    // Implementation with specific error set
+    const SpecificErrorImpl = struct {
+        pub fn doWork(self: @This(), value: u32) error{ OutOfMemory, InvalidInput }!void {
+            _ = self;
+            if (value == 0) return error.InvalidInput;
+        }
+    };
+
+    // Implementation with different specific error set
+    const DifferentErrorImpl = struct {
+        pub fn doWork(self: @This(), value: u32) error{ FileNotFound, AccessDenied }!void {
+            _ = self;
+            if (value == 0) return error.FileNotFound;
+        }
+    };
+
+    // Implementation with anyerror
+    const AnyErrorImpl = struct {
+        pub fn doWork(self: @This(), value: u32) anyerror!void {
+            _ = self;
+            if (value == 0) return error.SomeError;
+        }
+    };
+
+    // All should be compatible - interface only cares about error union, not specific errors
+    comptime Fallible.satisfiedBy(SpecificErrorImpl);
+    comptime Fallible.satisfiedBy(DifferentErrorImpl);
+    comptime Fallible.satisfiedBy(AnyErrorImpl);
+
+    try std.testing.expect(Fallible.incompatibilities(SpecificErrorImpl).len == 0);
+    try std.testing.expect(Fallible.incompatibilities(DifferentErrorImpl).len == 0);
+    try std.testing.expect(Fallible.incompatibilities(AnyErrorImpl).len == 0);
 }

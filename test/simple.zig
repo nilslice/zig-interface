@@ -9,13 +9,12 @@ const User = struct {
 };
 
 // Define our Repository interface with multiple methods
-// Note the anytype to indicate pointer methods
-const Repository = Interface(.{
-    .create = fn (anytype, User) anyerror!u32,
-    .findById = fn (anytype, u32) anyerror!?User,
-    .update = fn (anytype, User) anyerror!void,
-    .delete = fn (anytype, u32) anyerror!void,
-    .findByEmail = fn (anytype, []const u8) anyerror!?User,
+const IRepository = Interface(.{
+    .create = fn (User) anyerror!u32,
+    .findById = fn (u32) anyerror!?User,
+    .update = fn (User) anyerror!void,
+    .delete = fn (u32) anyerror!void,
+    .findByEmail = fn ([]const u8) anyerror!?User,
 }, null);
 
 // Implement a simple in-memory repository
@@ -75,7 +74,7 @@ pub const InMemoryRepository = struct {
 
 // Function that works with any Repository implementation
 fn createUser(repo: anytype, name: []const u8, email: []const u8) !User {
-    comptime Repository.satisfiedBy(@TypeOf(repo.*)); // Required to be called by function author
+    comptime IRepository.satisfiedBy(@TypeOf(repo.*)); // Required to be called by function author
 
     const user = User{
         .id = 0,
@@ -96,9 +95,9 @@ test "repository interface" {
     defer repo.deinit();
 
     // Verify at comptime that our implementation satisfies the interface
-    comptime Repository.satisfiedBy(@TypeOf(repo)); // Required to be called by function author
+    comptime IRepository.satisfiedBy(@TypeOf(repo)); // Required to be called by function author
     // or, can pass the concrete struct type directly:
-    comptime Repository.satisfiedBy(InMemoryRepository);
+    comptime IRepository.satisfiedBy(InMemoryRepository);
 
     // Test create and findById
     const user1 = try createUser(&repo, "John Doe", "john@example.com");
