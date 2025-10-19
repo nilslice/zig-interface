@@ -256,8 +256,8 @@ const IProcessor = Interface(.{
     ) anyerror!?ProcessingResult,
 }, null);
 
-// Generate VTable for complex types
 const Processor = IProcessor.Type();
+...
 ```
 
 ## Choosing Between VTable and Compile-Time Approaches
