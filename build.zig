@@ -103,6 +103,20 @@ pub fn build(b: *std.Build) void {
 
     const run_collections_tests = b.addRunArtifact(collections_tests);
 
+    // Inference test
+    const inference_test_module = b.createModule(.{
+        .root_source_file = b.path("test/inference.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    inference_test_module.addImport("interface", interface_module);
+
+    const inference_tests = b.addTest(.{
+        .root_module = inference_test_module,
+    });
+
+    const run_inference_tests = b.addRunArtifact(inference_tests);
+
     // Similar to creating the run step earlier, this exposes a `test` step to
     // the `zig build --help` menu, providing a way for the user to request
     // running the unit tests.
@@ -113,4 +127,5 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_embedded_tests.step);
     test_step.dependOn(&run_vtable_tests.step);
     test_step.dependOn(&run_collections_tests.step);
+    test_step.dependOn(&run_inference_tests.step);
 }
