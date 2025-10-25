@@ -22,7 +22,7 @@ test "complex type support" {
     };
 
     // Should compile without error
-    comptime IComplexTypes.satisfiedBy(GoodImpl);
+    comptime IComplexTypes.validation.satisfiedBy(GoodImpl);
 
     // Bad implementation - mismatched struct field type
     const BadImpl1 = struct {
@@ -69,9 +69,9 @@ test "complex type support" {
         }
     };
 
-    try std.testing.expect(IComplexTypes.incompatibilities(BadImpl1).len > 0);
-    try std.testing.expect(IComplexTypes.incompatibilities(BadImpl2).len > 0);
-    try std.testing.expect(IComplexTypes.incompatibilities(BadImpl3).len > 0);
+    try std.testing.expect(IComplexTypes.validation.incompatibilities(BadImpl1).len > 0);
+    try std.testing.expect(IComplexTypes.validation.incompatibilities(BadImpl2).len > 0);
+    try std.testing.expect(IComplexTypes.validation.incompatibilities(BadImpl3).len > 0);
 }
 
 test "complex type support with embedding" {
@@ -190,10 +190,10 @@ test "complex type support with embedding" {
     };
 
     // Should compile without error
-    comptime IComplexTypes.satisfiedBy(GoodImpl);
-    comptime IConfigurable.satisfiedBy(GoodImpl);
-    comptime IStatusProvider.satisfiedBy(GoodImpl);
-    comptime IDataHandler.satisfiedBy(GoodImpl);
+    comptime IComplexTypes.validation.satisfiedBy(GoodImpl);
+    comptime IConfigurable.validation.satisfiedBy(GoodImpl);
+    comptime IStatusProvider.validation.satisfiedBy(GoodImpl);
+    comptime IDataHandler.validation.satisfiedBy(GoodImpl);
 
     // Bad implementation - missing embedded interface methods
     const BadImpl1 = struct {
@@ -282,6 +282,6 @@ test "complex type support with embedding" {
     };
 
     // Test that bad implementations are caught
-    try std.testing.expect(IComplexTypes.incompatibilities(BadImpl1).len > 0);
-    try std.testing.expect(IComplexTypes.incompatibilities(BadImpl2).len > 0);
+    try std.testing.expect(IComplexTypes.validation.incompatibilities(BadImpl1).len > 0);
+    try std.testing.expect(IComplexTypes.validation.incompatibilities(BadImpl2).len > 0);
 }

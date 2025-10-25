@@ -7,7 +7,7 @@ const IWriter = Interface(.{
 }, null);
 
 // Generate the VTable-based runtime type
-const Writer = IWriter.Type();
+const Writer = IWriter;
 
 // Test implementation - Simplified with auto-generated wrappers
 const BufferWriter = struct {

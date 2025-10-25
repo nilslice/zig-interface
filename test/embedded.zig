@@ -114,9 +114,9 @@ test "interface embedding" {
     };
 
     // Test that our implementation satisfies all interfaces
-    comptime IMonitoredRepository.satisfiedBy(TrackedRepository);
-    comptime ILogger.satisfiedBy(TrackedRepository);
-    comptime IMetrics.satisfiedBy(TrackedRepository);
+    comptime IMonitoredRepository.validation.satisfiedBy(TrackedRepository);
+    comptime ILogger.validation.satisfiedBy(TrackedRepository);
+    comptime IMetrics.validation.satisfiedBy(TrackedRepository);
 
     // Test the actual implementation
     var repo = try TrackedRepository.init(std.testing.allocator);
@@ -166,7 +166,7 @@ test "interface embedding with conflicts" {
 
     // This should fail compilation with an ambiguous method error
     comptime {
-        if (IConflictingLogger.incompatibilities(BadImplementation).len == 0) {
+        if (IConflictingLogger.validation.incompatibilities(BadImplementation).len == 0) {
             @compileError("Should have detected conflicting 'log' methods");
         }
     }
@@ -205,9 +205,9 @@ test "nested interface embedding" {
     };
 
     // Should satisfy all interfaces
-    comptime IFileWriter.satisfiedBy(Implementation);
-    comptime IWriter.satisfiedBy(Implementation);
-    comptime ICloser.satisfiedBy(Implementation);
+    comptime IFileWriter.validation.satisfiedBy(Implementation);
+    comptime IWriter.validation.satisfiedBy(Implementation);
+    comptime ICloser.validation.satisfiedBy(Implementation);
 }
 
 test "high-level: runtime polymorphism with embedded interfaces" {
@@ -228,7 +228,7 @@ test "high-level: runtime polymorphism with embedded interfaces" {
     }, .{IMetrics});
 
     // Generate runtime type with VTable
-    const Repository = IRepository.Type();
+    const Repository = IRepository;
 
     // Implementation 1: In-memory repository with full monitoring
     const InMemoryRepo = struct {
@@ -381,9 +381,9 @@ test "high-level: runtime polymorphism with embedded interfaces" {
     };
 
     // Verify all implementations satisfy the interface
-    comptime IRepository.satisfiedBy(InMemoryRepo);
-    comptime IRepository.satisfiedBy(CacheRepo);
-    comptime IRepository.satisfiedBy(NoOpRepo);
+    comptime IRepository.validation.satisfiedBy(InMemoryRepo);
+    comptime IRepository.validation.satisfiedBy(CacheRepo);
+    comptime IRepository.validation.satisfiedBy(NoOpRepo);
 
     // Create instances
     var in_memory = try InMemoryRepo.init(std.testing.allocator);
@@ -431,7 +431,7 @@ test "high-level: repository fallback chain with embedded interfaces" {
         .put = fn ([]const u8, []const u8) anyerror!void,
     }, .{ILogger});
 
-    const Repository = IRepository.Type();
+    const Repository = IRepository;
 
     // L1 Cache - fast, limited capacity
     const L1Cache = struct {
@@ -529,9 +529,9 @@ test "high-level: repository fallback chain with embedded interfaces" {
         }
     };
 
-    comptime IRepository.satisfiedBy(L1Cache);
-    comptime IRepository.satisfiedBy(L2Cache);
-    comptime IRepository.satisfiedBy(BackingStore);
+    comptime IRepository.validation.satisfiedBy(L1Cache);
+    comptime IRepository.validation.satisfiedBy(L2Cache);
+    comptime IRepository.validation.satisfiedBy(BackingStore);
 
     // Set up the fallback chain
     var l1 = L1Cache.init(std.testing.allocator);

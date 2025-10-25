@@ -7,7 +7,7 @@ const State = Interface(.{
     .onEnter = fn () void,
     .onExit = fn () void,
     .update = fn (f32) void,
-}, null).Type();
+}, null);
 
 // Menu state implementation
 const MenuState = struct {

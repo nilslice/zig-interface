@@ -90,11 +90,11 @@ pub const AnthropicMock = struct {
 
 // Generic Inference API wrapper that uses VTable-based runtime polymorphism
 pub const Inference = struct {
-    interface: IGenerativeAI.Type(),
+    interface: IGenerativeAI,
 
     const Self = @This();
 
-    pub fn init(interface: IGenerativeAI.Type()) Self {
+    pub fn init(interface: IGenerativeAI) Self {
         return .{ .interface = interface };
     }
 
@@ -113,7 +113,7 @@ pub const Inference = struct {
 
 // Example function that works with any Generative AI implementation
 fn processPrompt(api: anytype, prompt: []const u8) ![]const u8 {
-    comptime IGenerativeAI.satisfiedBy(@TypeOf(api.*));
+    comptime IGenerativeAI.validation.satisfiedBy(@TypeOf(api.*));
     return try api.generate(prompt);
 }
 
@@ -122,7 +122,7 @@ test "OpenAI mock satisfies interface" {
     defer openai.deinit();
 
     // Verify at comptime that our implementation satisfies the interface
-    comptime IGenerativeAI.satisfiedBy(OpenAIMock);
+    comptime IGenerativeAI.validation.satisfiedBy(OpenAIMock);
 
     // Test generate
     const response = try openai.generate("Test prompt");
@@ -145,7 +145,7 @@ test "Anthropic mock satisfies interface" {
     defer anthropic.deinit();
 
     // Verify at comptime that our implementation satisfies the interface
-    comptime IGenerativeAI.satisfiedBy(AnthropicMock);
+    comptime IGenerativeAI.validation.satisfiedBy(AnthropicMock);
 
     // Test generate
     const response = try anthropic.generate("Test prompt");
@@ -180,7 +180,7 @@ test "processPrompt works with both implementations" {
 }
 
 test "Inference wrapper with VTable-based providers" {
-    const Provider = IGenerativeAI.Type();
+    const Provider = IGenerativeAI;
 
     // Create OpenAI inference instance using VTable
     var openai_provider = OpenAIMock.init(std.testing.allocator);
@@ -229,7 +229,7 @@ test "Inference wrapper with VTable-based providers" {
 }
 
 test "Runtime polymorphism with heterogeneous providers" {
-    const Provider = IGenerativeAI.Type();
+    const Provider = IGenerativeAI;
 
     // Create both providers
     var openai_provider = OpenAIMock.init(std.testing.allocator);
