@@ -167,6 +167,8 @@ test "processPrompt works with both implementations" {
     try std.testing.expectEqualStrings("This is a mock response from Anthropic Claude API", anthropic_response);
 }
 
+const Wrong = struct {};
+
 test "Inference wrapper with VTable-based providers" {
     // Create OpenAI inference instance using VTable
     var openai_provider = OpenAIMock.init(std.testing.allocator);

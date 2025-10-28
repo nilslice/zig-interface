@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub fn Interface(comptime methods: anytype, comptime embedded: anytype) type {
     const embedded_interfaces = switch (@typeInfo(@TypeOf(embedded))) {
@@ -397,7 +398,6 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
     return struct {
         const Methods = @TypeOf(methods);
         const Embeds = @TypeOf(embedded_interfaces);
-        const name = "Interface";
 
         /// Represents all possible interface implementation problems
         pub const Incompatibility = union(enum) {
@@ -493,7 +493,6 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
 
                 // Add primary interface
                 if (@hasDecl(Methods, method_name)) {
-                    interfaces[index] = name;
                     index += 1;
                 }
 
@@ -632,7 +631,7 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
         }
 
         fn formatIncompatibility(incompatibility: Incompatibility) []const u8 {
-            const indent = "   └─ ";
+            const indent = if (builtin.os.tag == .windows) "   \\- " else "   └─ ";
             return switch (incompatibility) {
                 .missing_method => |method| std.fmt.comptimePrint("Missing required method: {s}\n{s}Add the method with the correct signature to your implementation", .{ method, indent }),
 
@@ -672,13 +671,10 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
             comptime {
                 const problems = incompatibilities(ImplType);
                 if (problems.len > 0) {
-                    const title = "Type '{s}' does not implement interface '{s}':\n";
+                    const title = "Type '{s}' does not implement the expected interface(s). To fix:\n";
 
                     // First compute the total size needed for our error message
-                    var total_len: usize = std.fmt.count(title, .{
-                        @typeName(ImplType),
-                        name,
-                    });
+                    var total_len: usize = std.fmt.count(title, .{@typeName(ImplType)});
 
                     // Add space for each problem's length
                     for (1.., problems) |i, problem| {
@@ -689,10 +685,7 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
                     var errors: [total_len]u8 = undefined;
                     var written: usize = 0;
 
-                    written += (std.fmt.bufPrint(errors[written..], title, .{
-                        @typeName(ImplType),
-                        name,
-                    }) catch unreachable).len;
+                    written += (std.fmt.bufPrint(errors[written..], title, .{@typeName(ImplType)}) catch unreachable).len;
 
                     // Write each problem
                     for (1.., problems) |i, problem| {

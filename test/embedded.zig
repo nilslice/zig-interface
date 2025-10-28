@@ -9,23 +9,23 @@ const User = struct {
 
 test "interface embedding" {
     // Base interfaces
-    const ILogger = Interface(.{
+    const Logger = Interface(.{
         .log = fn ([]const u8) void,
         .getLogLevel = fn () u8,
     }, null);
 
-    const IMetrics = Interface(.{
+    const Metrics = Interface(.{
         .increment = fn ([]const u8) void,
         .getValue = fn ([]const u8) u64,
-    }, .{ILogger});
+    }, .{Logger});
 
     // Complex interface that embeds both Logger and Metrics
-    const IMonitoredRepository = Interface(.{
+    const MonitoredRepository = Interface(.{
         .create = fn (User) anyerror!u32,
         .findById = fn (u32) anyerror!?User,
         .update = fn (User) anyerror!void,
         .delete = fn (u32) anyerror!void,
-    }, .{IMetrics});
+    }, .{Metrics});
 
     // Implementation that satisfies all interfaces
     const TrackedRepository = struct {
@@ -114,9 +114,9 @@ test "interface embedding" {
     };
 
     // Test that our implementation satisfies all interfaces
-    comptime IMonitoredRepository.validation.satisfiedBy(TrackedRepository);
-    comptime ILogger.validation.satisfiedBy(TrackedRepository);
-    comptime IMetrics.validation.satisfiedBy(TrackedRepository);
+    comptime MonitoredRepository.validation.satisfiedBy(TrackedRepository);
+    comptime Logger.validation.satisfiedBy(TrackedRepository);
+    comptime Metrics.validation.satisfiedBy(TrackedRepository);
 
     // Test the actual implementation
     var repo = try TrackedRepository.init(std.testing.allocator);
@@ -212,23 +212,20 @@ test "nested interface embedding" {
 
 test "high-level: runtime polymorphism with embedded interfaces" {
     // Define a practical monitoring system using embedded interfaces
-    const ILogger = Interface(.{
+    const Logger = Interface(.{
         .log = fn ([]const u8) void,
         .setLevel = fn (u8) void,
     }, null);
 
-    const IMetrics = Interface(.{
+    const Metrics = Interface(.{
         .recordCount = fn ([]const u8, u64) void,
         .getCount = fn ([]const u8) u64,
-    }, .{ILogger});
+    }, .{Logger});
 
-    const IRepository = Interface(.{
+    const Repository = Interface(.{
         .save = fn (User) anyerror!u32,
         .load = fn (u32) anyerror!?User,
-    }, .{IMetrics});
-
-    // Generate runtime type with VTable
-    const Repository = IRepository;
+    }, .{Metrics});
 
     // Implementation 1: In-memory repository with full monitoring
     const InMemoryRepo = struct {
@@ -381,9 +378,9 @@ test "high-level: runtime polymorphism with embedded interfaces" {
     };
 
     // Verify all implementations satisfy the interface
-    comptime IRepository.validation.satisfiedBy(InMemoryRepo);
-    comptime IRepository.validation.satisfiedBy(CacheRepo);
-    comptime IRepository.validation.satisfiedBy(NoOpRepo);
+    comptime Repository.validation.satisfiedBy(InMemoryRepo);
+    comptime Repository.validation.satisfiedBy(CacheRepo);
+    comptime Repository.validation.satisfiedBy(NoOpRepo);
 
     // Create instances
     var in_memory = try InMemoryRepo.init(std.testing.allocator);
@@ -422,16 +419,14 @@ test "high-level: runtime polymorphism with embedded interfaces" {
 
 test "high-level: repository fallback chain with embedded interfaces" {
     // Demonstrate a practical pattern: fallback chain of repositories
-    const ILogger = Interface(.{
+    const Logger = Interface(.{
         .log = fn ([]const u8) void,
     }, null);
 
-    const IRepository = Interface(.{
+    const Repository = Interface(.{
         .get = fn ([]const u8) anyerror!?[]const u8,
         .put = fn ([]const u8, []const u8) anyerror!void,
-    }, .{ILogger});
-
-    const Repository = IRepository;
+    }, .{Logger});
 
     // L1 Cache - fast, limited capacity
     const L1Cache = struct {
@@ -529,9 +524,9 @@ test "high-level: repository fallback chain with embedded interfaces" {
         }
     };
 
-    comptime IRepository.validation.satisfiedBy(L1Cache);
-    comptime IRepository.validation.satisfiedBy(L2Cache);
-    comptime IRepository.validation.satisfiedBy(BackingStore);
+    comptime Repository.validation.satisfiedBy(L1Cache);
+    comptime Repository.validation.satisfiedBy(L2Cache);
+    comptime Repository.validation.satisfiedBy(BackingStore);
 
     // Set up the fallback chain
     var l1 = L1Cache.init(std.testing.allocator);
