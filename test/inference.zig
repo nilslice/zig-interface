@@ -9,14 +9,14 @@ const AIProvider = Interface(.{
 }, null);
 
 fn generate(provider: AIProvider, prompt: []const u8) ![]const u8 {
-    return try provider.vtable.generate(provider.ptr, prompt);
+    return provider.vtable.generate(provider.ptr, prompt);
 }
 
 fn embed(provider: AIProvider, data: []const u8) ![256]f16 {
-    return try provider.vtable.embed(provider.ptr, data);
+    return provider.vtable.embed(provider.ptr, data);
 }
 fn query(provider: AIProvider, prompt: []const u8) ![][]const u8 {
-    return try provider.vtable.query(provider.ptr, prompt);
+    return provider.vtable.query(provider.ptr, prompt);
 }
 
 // OpenAI Mock Implementation
