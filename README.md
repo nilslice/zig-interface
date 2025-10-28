@@ -57,16 +57,12 @@ In the end you can import the `interface` module. For example:
 ```zig
 const Interface = @import("interface").Interface;
 
-const IRepository = Interface(.{
+const Repository = Interface(.{
     .create = fn(User) anyerror!u32,
     .findById = fn(u32) anyerror!?User,
     .update = fn(User) anyerror!void,
     .delete = fn(u32) anyerror!void,
 }, null);
-
-// Generate VTable-based runtime type for polymorphism
-// (use this as the interface for e.g. a function argument)
-const Repository = IRepository.Type();
 ```
 
 ## Usage
@@ -81,16 +77,18 @@ building plugin systems.
 **1. Define an interface with required method signatures:**
 
 ```zig
-const IRepository = Interface(.{
+const Repository = Interface(.{
     .create = fn(User) anyerror!u32,
     .findById = fn(u32) anyerror!?User,
     .update = fn(User) anyerror!void,
     .delete = fn(u32) anyerror!void,
 }, null);
-
-// Generate the VTable-based runtime type
-const Repository = IRepository.Type();
 ```
+
+> Note: `Interface()` generates a type whose function set declared implicitly
+> take an `*anyopaque` self-reference. This saves you from needing to include it
+> in the declaration. However, `anyerror` must be included for any fallible
+> function, but can be omitted if your function cannot return an error.
 
 **2. Implement the interface methods in your type:**
 
@@ -145,7 +143,7 @@ for (repositories) |repo| {
 }
 
 // Return interface types from functions
-fn getRepository(use_memory: bool, allocator: Allocator) !Repository {
+fn getRepository(use_memory: bool, allocator: Allocator) Repository {
     if (use_memory) {
         var repo = InMemoryRepository.init(allocator);
         return Repository.from(&repo);
@@ -165,7 +163,7 @@ use the interface for validation without the VTable overhead:
 // Generic function that accepts any Repository implementation
 fn createUser(repo: anytype, name: []const u8, email: []const u8) !User {
     // Validate at compile time that repo implements IRepository
-    comptime IRepository.satisfiedBy(@TypeOf(repo.*));
+    comptime Repository.validation.satisfiedBy(@TypeOf(repo.*));
 
     const user = User{ .id = 0, .name = name, .email = email };
     const id = try repo.create(user);
@@ -183,18 +181,15 @@ Interfaces can embed other interfaces to combine their requirements. The
 generated VTable will include all methods from embedded interfaces:
 
 ```zig
-const ILogger = Interface(.{
+const Logger = Interface(.{
     .log = fn([]const u8) void,
     .getLogLevel = fn() u8,
 }, null);
 
-const IMetrics = Interface(.{
+const Metrics = Interface(.{
     .increment = fn([]const u8) void,
     .getValue = fn([]const u8) u64,
-}, .{ ILogger });  // Embeds ILogger interface
-
-// VTable includes both Metrics AND Logger methods
-const Metrics = IMetrics.Type();
+}, .{ Logger });  // Embeds Logger interface
 
 // Implementation must provide all methods
 const MyMetrics = struct {
@@ -244,7 +239,7 @@ The interface checker supports complex types including structs, enums, arrays,
 and optionals:
 
 ```zig
-const IProcessor = Interface(.{
+const Processor = Interface(.{
     .process = fn(
         struct { config: Config, points: []const DataPoint },
         enum { ready, processing, error },
@@ -255,8 +250,6 @@ const IProcessor = Interface(.{
         }
     ) anyerror!?ProcessingResult,
 }, null);
-
-const Processor = IProcessor.Type();
 ...
 ```
 
@@ -279,15 +272,13 @@ together:
 
 ```zig
 // Define once
-const IRepository = Interface(.{
+const Repository = Interface(.{
     .save = fn(Data) anyerror!void,
 }, null);
 
-const Repository = IRepository.Type();
-
 // Use compile-time validation for hot paths
 fn processBatch(repo: anytype, items: []const Data) !void {
-    comptime IRepository.satisfiedBy(@TypeOf(repo.*));
+    comptime Repository.validation.satisfiedBy(@TypeOf(repo.*));
     for (items) |item| {
         try repo.save(item);  // Direct call, can be inlined
     }
