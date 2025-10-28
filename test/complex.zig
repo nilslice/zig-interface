@@ -2,8 +2,8 @@ const std = @import("std");
 const Interface = @import("interface").Interface;
 
 test "complex type support" {
-    const ComplexTypes = Interface(.{
-        .complexMethod = fn (anytype, struct { a: []const u8, b: ?i32 }, enum { a, b, c }, []const struct { x: u32, y: ?[]const u8 }) anyerror!void,
+    const IComplexTypes = Interface(.{
+        .complexMethod = fn (struct { a: []const u8, b: ?i32 }, enum { a, b, c }, []const struct { x: u32, y: ?[]const u8 }) anyerror!void,
     }, null);
 
     // Correct implementation
@@ -22,7 +22,7 @@ test "complex type support" {
     };
 
     // Should compile without error
-    comptime ComplexTypes.satisfiedBy(GoodImpl);
+    comptime IComplexTypes.validation.satisfiedBy(GoodImpl);
 
     // Bad implementation - mismatched struct field type
     const BadImpl1 = struct {
@@ -69,9 +69,9 @@ test "complex type support" {
         }
     };
 
-    try std.testing.expect(ComplexTypes.incompatibilities(BadImpl1).len > 0);
-    try std.testing.expect(ComplexTypes.incompatibilities(BadImpl2).len > 0);
-    try std.testing.expect(ComplexTypes.incompatibilities(BadImpl3).len > 0);
+    try std.testing.expect(IComplexTypes.validation.incompatibilities(BadImpl1).len > 0);
+    try std.testing.expect(IComplexTypes.validation.incompatibilities(BadImpl2).len > 0);
+    try std.testing.expect(IComplexTypes.validation.incompatibilities(BadImpl3).len > 0);
 }
 
 test "complex type support with embedding" {
@@ -107,26 +107,26 @@ test "complex type support with embedding" {
     };
 
     // Base interfaces with complex types
-    const Configurable = Interface(.{
-        .configure = fn (anytype, Config) anyerror!void,
-        .getConfig = fn (anytype) Config,
+    const IConfigurable = Interface(.{
+        .configure = fn (Config) anyerror!void,
+        .getConfig = fn () Config,
     }, null);
 
-    const StatusProvider = Interface(.{
-        .getStatus = fn (anytype) Status,
-        .setStatus = fn (anytype, Status) anyerror!void,
+    const IStatusProvider = Interface(.{
+        .getStatus = fn () Status,
+        .setStatus = fn (Status) anyerror!void,
     }, null);
 
-    const DataHandler = Interface(.{
-        .processData = fn (anytype, []const DataPoint) anyerror!void,
-        .getLastPoint = fn (anytype) ?DataPoint,
+    const IDataHandler = Interface(.{
+        .processData = fn ([]const DataPoint) anyerror!void,
+        .getLastPoint = fn () ?DataPoint,
     }, null);
 
     // Complex interface that embeds all the above and adds its own complex methods
-    const ComplexTypes = Interface(.{
-        .complexMethod = fn (anytype, Config, Status, []const DataPoint) anyerror!void,
-        .superComplex = fn (anytype, ProcessingInput, ProcessingMode, []const HistoryEntry) anyerror!?ProcessingResult,
-    }, .{ Configurable, StatusProvider, DataHandler });
+    const IComplexTypes = Interface(.{
+        .complexMethod = fn (Config, Status, []const DataPoint) anyerror!void,
+        .superComplex = fn (ProcessingInput, ProcessingMode, []const HistoryEntry) anyerror!?ProcessingResult,
+    }, .{ IConfigurable, IStatusProvider, IDataHandler });
 
     // Correct implementation
     const GoodImpl = struct {
@@ -190,10 +190,10 @@ test "complex type support with embedding" {
     };
 
     // Should compile without error
-    comptime ComplexTypes.satisfiedBy(GoodImpl);
-    comptime Configurable.satisfiedBy(GoodImpl);
-    comptime StatusProvider.satisfiedBy(GoodImpl);
-    comptime DataHandler.satisfiedBy(GoodImpl);
+    comptime IComplexTypes.validation.satisfiedBy(GoodImpl);
+    comptime IConfigurable.validation.satisfiedBy(GoodImpl);
+    comptime IStatusProvider.validation.satisfiedBy(GoodImpl);
+    comptime IDataHandler.validation.satisfiedBy(GoodImpl);
 
     // Bad implementation - missing embedded interface methods
     const BadImpl1 = struct {
@@ -282,6 +282,6 @@ test "complex type support with embedding" {
     };
 
     // Test that bad implementations are caught
-    try std.testing.expect(ComplexTypes.incompatibilities(BadImpl1).len > 0);
-    try std.testing.expect(ComplexTypes.incompatibilities(BadImpl2).len > 0);
+    try std.testing.expect(IComplexTypes.validation.incompatibilities(BadImpl1).len > 0);
+    try std.testing.expect(IComplexTypes.validation.incompatibilities(BadImpl2).len > 0);
 }

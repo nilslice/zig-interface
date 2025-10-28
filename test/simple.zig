@@ -9,13 +9,13 @@ const User = struct {
 };
 
 // Define our Repository interface with multiple methods
-// Note the anytype to indicate pointer methods
+// Interface() now returns the vtable-based type directly
 const Repository = Interface(.{
-    .create = fn (anytype, User) anyerror!u32,
-    .findById = fn (anytype, u32) anyerror!?User,
-    .update = fn (anytype, User) anyerror!void,
-    .delete = fn (anytype, u32) anyerror!void,
-    .findByEmail = fn (anytype, []const u8) anyerror!?User,
+    .create = fn (User) anyerror!u32,
+    .findById = fn (u32) anyerror!?User,
+    .update = fn (User) anyerror!void,
+    .delete = fn (u32) anyerror!void,
+    .findByEmail = fn ([]const u8) anyerror!?User,
 }, null);
 
 // Implement a simple in-memory repository
@@ -73,9 +73,10 @@ pub const InMemoryRepository = struct {
     }
 };
 
-// Function that works with any Repository implementation
+// Function that works with any Repository implementation (compile-time duck typing)
 fn createUser(repo: anytype, name: []const u8, email: []const u8) !User {
-    comptime Repository.satisfiedBy(@TypeOf(repo.*)); // Required to be called by function author
+    // Use .validation.satisfiedBy() to verify interface compliance at compile time
+    comptime Repository.validation.satisfiedBy(@TypeOf(repo.*));
 
     const user = User{
         .id = 0,
@@ -91,17 +92,71 @@ fn createUser(repo: anytype, name: []const u8, email: []const u8) !User {
     };
 }
 
+// Function that works with any Repository implementation via vtable (runtime polymorphism)
+fn dynCreateUser(repo: Repository, name: []const u8, email: []const u8) !User {
+    const user = User{
+        .id = 0,
+        .name = name,
+        .email = email,
+    };
+
+    const id = try repo.vtable.create(repo.ptr, user);
+    return User{
+        .id = id,
+        .name = name,
+        .email = email,
+    };
+}
+
 test "repository interface" {
     var repo = InMemoryRepository.init(std.testing.allocator);
     defer repo.deinit();
 
     // Verify at comptime that our implementation satisfies the interface
-    comptime Repository.satisfiedBy(@TypeOf(repo)); // Required to be called by function author
+    // Use .validation namespace for compile-time validation
+    comptime Repository.validation.satisfiedBy(@TypeOf(repo));
     // or, can pass the concrete struct type directly:
-    comptime Repository.satisfiedBy(InMemoryRepository);
+    comptime Repository.validation.satisfiedBy(InMemoryRepository);
 
     // Test create and findById
     const user1 = try createUser(&repo, "John Doe", "john@example.com");
+    const found = try repo.findById(user1.id);
+    try std.testing.expect(found != null);
+    try std.testing.expectEqualStrings("John Doe", found.?.name);
+
+    // Test findByEmail
+    const by_email = try repo.findByEmail("john@example.com");
+    try std.testing.expect(by_email != null);
+    try std.testing.expectEqual(user1.id, by_email.?.id);
+
+    // Test update
+    var updated_user = user1;
+    updated_user.name = "Johnny Doe";
+    try repo.update(updated_user);
+    const found_updated = try repo.findById(user1.id);
+    try std.testing.expect(found_updated != null);
+    try std.testing.expectEqualStrings("Johnny Doe", found_updated.?.name);
+
+    // Test delete
+    try repo.delete(user1.id);
+    const not_found = try repo.findById(user1.id);
+    try std.testing.expect(not_found == null);
+
+    // Test error cases
+    try std.testing.expectError(error.UserNotFound, repo.update(User{
+        .id = 999,
+        .name = "Not Found",
+        .email = "none@example.com",
+    }));
+    try std.testing.expectError(error.UserNotFound, repo.delete(999));
+}
+
+test "dynamic repository interface" {
+    var repo = InMemoryRepository.init(std.testing.allocator);
+    defer repo.deinit();
+
+    // Test create and findById
+    const user1 = try dynCreateUser(Repository.from(&repo), "John Doe", "john@example.com");
     const found = try repo.findById(user1.id);
     try std.testing.expect(found != null);
     try std.testing.expectEqualStrings("John Doe", found.?.name);
