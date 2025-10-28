@@ -2,11 +2,22 @@ const std = @import("std");
 const Interface = @import("interface").Interface;
 
 // Define our Generative AI API interface
-const IGenerativeAI = Interface(.{
+const AIProvider = Interface(.{
     .generate = fn ([]const u8) anyerror![]const u8,
     .embed = fn ([]const u8) anyerror![256]f16,
     .query = fn ([]const u8) anyerror![][]const u8,
 }, null);
+
+fn generate(provider: AIProvider, prompt: []const u8) ![]const u8 {
+    return try provider.vtable.generate(provider.ptr, prompt);
+}
+
+fn embed(provider: AIProvider, data: []const u8) ![256]f16 {
+    return try provider.vtable.embed(provider.ptr, data);
+}
+fn query(provider: AIProvider, prompt: []const u8) ![][]const u8 {
+    return try provider.vtable.query(provider.ptr, prompt);
+}
 
 // OpenAI Mock Implementation
 pub const OpenAIMock = struct {
@@ -88,32 +99,9 @@ pub const AnthropicMock = struct {
     }
 };
 
-// Generic Inference API wrapper that uses VTable-based runtime polymorphism
-pub const Inference = struct {
-    interface: IGenerativeAI,
-
-    const Self = @This();
-
-    pub fn init(interface: IGenerativeAI) Self {
-        return .{ .interface = interface };
-    }
-
-    pub fn generate(self: *Self, prompt: []const u8) ![]const u8 {
-        return try self.interface.vtable.generate(self.interface.ptr, prompt);
-    }
-
-    pub fn embed(self: *Self, input: []const u8) ![256]f16 {
-        return try self.interface.vtable.embed(self.interface.ptr, input);
-    }
-
-    pub fn query(self: *Self, input: []const u8) ![][]const u8 {
-        return try self.interface.vtable.query(self.interface.ptr, input);
-    }
-};
-
 // Example function that works with any Generative AI implementation
 fn processPrompt(api: anytype, prompt: []const u8) ![]const u8 {
-    comptime IGenerativeAI.validation.satisfiedBy(@TypeOf(api.*));
+    comptime AIProvider.validation.satisfiedBy(@TypeOf(api.*));
     return try api.generate(prompt);
 }
 
@@ -122,7 +110,7 @@ test "OpenAI mock satisfies interface" {
     defer openai.deinit();
 
     // Verify at comptime that our implementation satisfies the interface
-    comptime IGenerativeAI.validation.satisfiedBy(OpenAIMock);
+    comptime AIProvider.validation.satisfiedBy(OpenAIMock);
 
     // Test generate
     const response = try openai.generate("Test prompt");
@@ -145,7 +133,7 @@ test "Anthropic mock satisfies interface" {
     defer anthropic.deinit();
 
     // Verify at comptime that our implementation satisfies the interface
-    comptime IGenerativeAI.validation.satisfiedBy(AnthropicMock);
+    comptime AIProvider.validation.satisfiedBy(AnthropicMock);
 
     // Test generate
     const response = try anthropic.generate("Test prompt");
@@ -180,25 +168,22 @@ test "processPrompt works with both implementations" {
 }
 
 test "Inference wrapper with VTable-based providers" {
-    const Provider = IGenerativeAI;
-
     // Create OpenAI inference instance using VTable
     var openai_provider = OpenAIMock.init(std.testing.allocator);
     defer openai_provider.deinit();
-    const openai_interface = Provider.from(&openai_provider);
-    var openai_inference = Inference.init(openai_interface);
+    const openai_interface = AIProvider.from(&openai_provider);
 
     // Test OpenAI generate
-    const openai_response = try openai_inference.generate("Test prompt");
+    const openai_response = try generate(openai_interface, "Test prompt");
     try std.testing.expectEqualStrings("This is a mock response from OpenAI API", openai_response);
 
     // Test OpenAI embed
-    const openai_embeddings = try openai_inference.embed("Test input");
+    const openai_embeddings = try embed(openai_interface, "Test input");
     try std.testing.expectEqual(@as(f16, 0.0), openai_embeddings[0]);
     try std.testing.expectEqual(@as(f16, 255.0), openai_embeddings[255]);
 
     // Test OpenAI query
-    const openai_results = try openai_inference.query("Test query");
+    const openai_results = try query(openai_interface, "Test query");
     defer std.testing.allocator.free(openai_results);
     try std.testing.expectEqual(@as(usize, 3), openai_results.len);
     try std.testing.expectEqualStrings("OpenAI result 1", openai_results[0]);
@@ -208,20 +193,19 @@ test "Inference wrapper with VTable-based providers" {
     // Create Anthropic inference instance using VTable
     var anthropic_provider = AnthropicMock.init(std.testing.allocator);
     defer anthropic_provider.deinit();
-    const anthropic_interface = Provider.from(&anthropic_provider);
-    var anthropic_inference = Inference.init(anthropic_interface);
+    const anthropic_interface = AIProvider.from(&anthropic_provider);
 
     // Test Anthropic generate
-    const anthropic_response = try anthropic_inference.generate("Test prompt");
+    const anthropic_response = try generate(anthropic_interface, "Test prompt");
     try std.testing.expectEqualStrings("This is a mock response from Anthropic Claude API", anthropic_response);
 
     // Test Anthropic embed
-    const anthropic_embeddings = try anthropic_inference.embed("Test input");
+    const anthropic_embeddings = try embed(anthropic_interface, "Test input");
     try std.testing.expectEqual(@as(f16, 255.0), anthropic_embeddings[0]);
     try std.testing.expectEqual(@as(f16, 0.0), anthropic_embeddings[255]);
 
     // Test Anthropic query
-    const anthropic_results = try anthropic_inference.query("Test query");
+    const anthropic_results = try query(anthropic_interface, "Test query");
     defer std.testing.allocator.free(anthropic_results);
     try std.testing.expectEqual(@as(usize, 2), anthropic_results.len);
     try std.testing.expectEqualStrings("Anthropic result 1", anthropic_results[0]);
@@ -229,8 +213,6 @@ test "Inference wrapper with VTable-based providers" {
 }
 
 test "Runtime polymorphism with heterogeneous providers" {
-    const Provider = IGenerativeAI;
-
     // Create both providers
     var openai_provider = OpenAIMock.init(std.testing.allocator);
     defer openai_provider.deinit();
@@ -238,29 +220,29 @@ test "Runtime polymorphism with heterogeneous providers" {
     defer anthropic_provider.deinit();
 
     // Store different provider types in an array (runtime polymorphism!)
-    var providers = [_]Inference{
-        Inference.init(Provider.from(&openai_provider)),
-        Inference.init(Provider.from(&anthropic_provider)),
+    const providers = [_]AIProvider{
+        AIProvider.from(&openai_provider),
+        AIProvider.from(&anthropic_provider),
     };
 
     // Test that we can call through the array and get different results
-    const openai_response = try providers[0].generate("prompt");
-    const anthropic_response = try providers[1].generate("prompt");
+    const openai_response = try generate(providers[0], "prompt");
+    const anthropic_response = try generate(providers[1], "prompt");
 
     try std.testing.expectEqualStrings("This is a mock response from OpenAI API", openai_response);
     try std.testing.expectEqualStrings("This is a mock response from Anthropic Claude API", anthropic_response);
 
     // Test embeddings are different
-    const openai_embed = try providers[0].embed("input");
-    const anthropic_embed = try providers[1].embed("input");
+    const openai_embed = try embed(providers[0], "input");
+    const anthropic_embed = try embed(providers[1], "input");
 
     try std.testing.expectEqual(@as(f16, 0.0), openai_embed[0]);
     try std.testing.expectEqual(@as(f16, 255.0), anthropic_embed[0]);
 
     // Test query returns different number of results
-    const openai_query = try providers[0].query("query");
+    const openai_query = try query(providers[0], "query");
     defer std.testing.allocator.free(openai_query);
-    const anthropic_query = try providers[1].query("query");
+    const anthropic_query = try query(providers[1], "query");
     defer std.testing.allocator.free(anthropic_query);
 
     try std.testing.expectEqual(@as(usize, 3), openai_query.len);
