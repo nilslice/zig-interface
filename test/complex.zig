@@ -285,3 +285,75 @@ test "complex type support with embedding" {
     try std.testing.expect(IComplexTypes.validation.incompatibilities(BadImpl1).len > 0);
     try std.testing.expect(IComplexTypes.validation.incompatibilities(BadImpl2).len > 0);
 }
+
+test "const slice mismatch detected" {
+    const IProcessor = Interface(.{
+        .process = fn ([]const u8) void,
+    }, null);
+
+    const BadImpl = struct {
+        pub fn process(self: @This(), data: []u8) void {
+            _ = self;
+            _ = data;
+        }
+    };
+
+    const problems = comptime IProcessor.validation.incompatibilities(BadImpl);
+    try std.testing.expectEqual(@as(usize, 1), problems.len);
+}
+
+test "optional vs non-optional return mismatch detected" {
+    const ILookup = Interface(.{
+        .find = fn (u64) ?[]const u8,
+    }, null);
+
+    const BadImpl = struct {
+        pub fn find(self: @This(), id: u64) []const u8 {
+            _ = self;
+            _ = id;
+            return "data";
+        }
+    };
+
+    const problems = comptime ILookup.validation.incompatibilities(BadImpl);
+    try std.testing.expectEqual(@as(usize, 1), problems.len);
+}
+
+test "struct field type mismatch detected" {
+    const Config = struct { name: []const u8, value: u32 };
+    const WrongConfig = struct { name: []const u8, value: i32 };
+
+    const IConfigurable = Interface(.{
+        .configure = fn (Config) void,
+    }, null);
+
+    const BadImpl = struct {
+        pub fn configure(self: @This(), cfg: WrongConfig) void {
+            _ = self;
+            _ = cfg;
+        }
+    };
+
+    const problems = comptime IConfigurable.validation.incompatibilities(BadImpl);
+    try std.testing.expectEqual(@as(usize, 1), problems.len);
+}
+
+test "enum variant mismatch detected" {
+    const GoodStatus = enum { ok, err, pending };
+    const BadStatus = enum { ok, err };
+
+    const IStatusCheck = Interface(.{
+        .check = fn (GoodStatus) bool,
+    }, null);
+
+    const BadImpl = struct {
+        pub fn check(self: @This(), status: BadStatus) bool {
+            _ = self;
+            _ = status;
+            return true;
+        }
+    };
+
+    const problems = comptime IStatusCheck.validation.incompatibilities(BadImpl);
+    try std.testing.expectEqual(@as(usize, 1), problems.len);
+}

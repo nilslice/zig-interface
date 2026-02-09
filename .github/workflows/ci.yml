@@ -11,7 +11,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        zig-version: ["0.15.1"]
+        zig-version: ["0.15.1", "0.15.2"]
 
     steps:
       - uses: actions/checkout@v3
