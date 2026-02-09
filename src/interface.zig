@@ -230,31 +230,31 @@ fn generateTypeHint(comptime expected: type, comptime got: type) ?[]const u8 {
     const got_info = @typeInfo(got);
 
     // Check for common slice constness issues
-    if (exp_info == .Pointer and got_info == .Pointer) {
-        const exp_ptr = exp_info.Pointer;
-        const got_ptr = got_info.Pointer;
+    if (exp_info == .pointer and got_info == .pointer) {
+        const exp_ptr = exp_info.pointer;
+        const got_ptr = got_info.pointer;
         if (exp_ptr.is_const and !got_ptr.is_const) {
             return "Consider making the parameter type const (e.g., []const u8 instead of []u8)";
         }
     }
 
     // Check for optional vs non-optional mismatches
-    if (exp_info == .Optional and got_info != .Optional) {
+    if (exp_info == .optional and got_info != .optional) {
         return "The expected type is optional. Consider wrapping the parameter in '?'";
     }
-    if (exp_info != .Optional and got_info == .Optional) {
+    if (exp_info != .optional and got_info == .optional) {
         return "The expected type is non-optional. Remove the '?' from the parameter type";
     }
 
     // Check for enum type mismatches
-    if (exp_info == .Enum and got_info == .Enum) {
+    if (exp_info == .@"enum" and got_info == .@"enum") {
         return "Check that the enum values and field names match exactly";
     }
 
     // Check for struct field mismatches
-    if (exp_info == .Struct and got_info == .Struct) {
-        const exp_s = exp_info.Struct;
-        const got_s = got_info.Struct;
+    if (exp_info == .@"struct" and got_info == .@"struct") {
+        const exp_s = exp_info.@"struct";
+        const got_s = got_info.@"struct";
         if (exp_s.fields.len != got_s.fields.len) {
             return "The structs have different numbers of fields";
         }
@@ -263,9 +263,9 @@ fn generateTypeHint(comptime expected: type, comptime got: type) ?[]const u8 {
     }
 
     // Generic catch-all for pointer size mismatches
-    if (exp_info == .Pointer and got_info == .Pointer) {
-        const exp_ptr = exp_info.Pointer;
-        const got_ptr = got_info.Pointer;
+    if (exp_info == .pointer and got_info == .pointer) {
+        const exp_ptr = exp_info.pointer;
+        const got_ptr = got_info.pointer;
         if (exp_ptr.size != got_ptr.size) {
             return "Check pointer type (single item vs slice vs many-item)";
         }
@@ -280,7 +280,7 @@ fn formatTypeMismatch(
     comptime got: type,
     indent: []const u8,
 ) []const u8 {
-    var result = std.fmt.comptimePrint(
+    const base = std.fmt.comptimePrint(
         "{s}Expected: {s}\n{s}Got: {s}",
         .{
             indent,
@@ -292,10 +292,10 @@ fn formatTypeMismatch(
 
     // Add hint if available
     if (generateTypeHint(expected, got)) |hint| {
-        result = result ++ std.fmt.comptimePrint("\n   {s}Hint: {s}", .{ indent, hint });
+        return base ++ std.fmt.comptimePrint("\n   {s}Hint: {s}", .{ indent, hint });
     }
 
-    return result;
+    return base;
 }
 
 fn generateVTableType(comptime methods: anytype, comptime embedded_interfaces: anytype, comptime has_embeds: bool) type {
@@ -472,7 +472,7 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
                 var interface_count: usize = 0;
 
                 // Count primary interface
-                if (@hasDecl(Methods, method_name)) {
+                if (@hasField(Methods, method_name)) {
                     interface_count += 1;
                 }
 
@@ -492,7 +492,8 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
                 var index: usize = 0;
 
                 // Add primary interface
-                if (@hasDecl(Methods, method_name)) {
+                if (@hasField(Methods, method_name)) {
+                    interfaces[index] = "primary";
                     index += 1;
                 }
 
@@ -515,7 +516,7 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
         pub fn hasMethod(comptime method_name: []const u8) bool {
             comptime {
                 // Check primary interface
-                if (@hasDecl(Methods, method_name)) {
+                if (@hasField(Methods, method_name)) {
                     return true;
                 }
 

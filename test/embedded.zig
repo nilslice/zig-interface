@@ -588,3 +588,43 @@ test "high-level: repository fallback chain with embedded interfaces" {
     // Still only 1 backing store read
     try std.testing.expectEqual(@as(usize, 1), backing.reads);
 }
+
+test "hasMethod finds primary interface methods" {
+    const IWriter = Interface(.{
+        .write = fn ([]const u8) anyerror!usize,
+        .flush = fn () anyerror!void,
+    }, null);
+
+    const has_write = comptime IWriter.validation.hasMethod("write");
+    const has_flush = comptime IWriter.validation.hasMethod("flush");
+    const has_close = comptime IWriter.validation.hasMethod("close");
+
+    try std.testing.expect(has_write);
+    try std.testing.expect(has_flush);
+    try std.testing.expect(!has_close);
+}
+
+test "detects ambiguity between primary and embedded method of same name" {
+    const IBase = Interface(.{
+        .process = fn ([]const u8) void,
+    }, null);
+
+    // Primary interface also defines 'process' with the SAME signature.
+    // This should be flagged as ambiguous, just like two embedded interfaces
+    // with the same method name are (see "interface embedding with conflicts" test).
+    const IDerived = Interface(.{
+        .process = fn ([]const u8) void,
+    }, .{IBase});
+
+    const Impl = struct {
+        pub fn process(self: @This(), data: []const u8) void {
+            _ = self;
+            _ = data;
+        }
+    };
+
+    const problems = comptime IDerived.validation.incompatibilities(Impl);
+    // Since both signatures match the implementation, the ONLY way
+    // to get problems.len > 0 is through ambiguity detection.
+    try std.testing.expect(problems.len > 0);
+}
