@@ -69,9 +69,9 @@ test "complex type support" {
         }
     };
 
-    try std.testing.expect(IComplexTypes.validation.incompatibilities(BadImpl1).len > 0);
-    try std.testing.expect(IComplexTypes.validation.incompatibilities(BadImpl2).len > 0);
-    try std.testing.expect(IComplexTypes.validation.incompatibilities(BadImpl3).len > 0);
+    try std.testing.expect(comptime IComplexTypes.validation.incompatibilities(BadImpl1).len > 0);
+    try std.testing.expect(comptime IComplexTypes.validation.incompatibilities(BadImpl2).len > 0);
+    try std.testing.expect(comptime IComplexTypes.validation.incompatibilities(BadImpl3).len > 0);
 }
 
 test "complex type support with embedding" {
@@ -282,8 +282,8 @@ test "complex type support with embedding" {
     };
 
     // Test that bad implementations are caught
-    try std.testing.expect(IComplexTypes.validation.incompatibilities(BadImpl1).len > 0);
-    try std.testing.expect(IComplexTypes.validation.incompatibilities(BadImpl2).len > 0);
+    try std.testing.expect(comptime IComplexTypes.validation.incompatibilities(BadImpl1).len > 0);
+    try std.testing.expect(comptime IComplexTypes.validation.incompatibilities(BadImpl2).len > 0);
 }
 
 test "const slice mismatch detected" {

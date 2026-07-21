@@ -3,6 +3,8 @@
 A comprehensive interface system for Zig supporting both **compile-time
 validation** and **runtime polymorphism** through VTable generation.
 
+> **Requires Zig 0.16+.** Older Zig versions should depend on a tagged 0.15-compatible release.
+
 ## Features
 
 This library provides two complementary approaches to interface-based design in
@@ -25,8 +27,7 @@ Zig:
 
 ## Install
 
-Add or update this library as a dependency in your zig project run the following
-command:
+Add or update this library as a dependency in your Zig project:
 
 ```sh
 zig fetch --save git+https://github.com/nilslice/zig-interface
@@ -41,18 +42,21 @@ const interface_dependency = b.dependency("interface", .{
     .optimize = optimize,
 });
 
-const exe = b.addExecutable(.{
-    .name = "main",
+const exe_mod = b.createModule(.{
     .root_source_file = b.path("src/main.zig"),
     .target = target,
     .optimize = optimize,
 });
-// import the exposed `interface` module from the dependency
-exe.root_module.addImport("interface", interface_dependency.module("interface"));
+exe_mod.addImport("interface", interface_dependency.module("interface"));
+
+const exe = b.addExecutable(.{
+    .name = "main",
+    .root_module = exe_mod,
+});
 // ...
 ```
 
-In the end you can import the `interface` module. For example:
+Then import the `interface` module:
 
 ```zig
 const Interface = @import("interface").Interface;
@@ -142,14 +146,12 @@ for (repositories) |repo| {
     const found = try repo.vtable.findById(repo.ptr, id);
 }
 
-// Return interface types from functions
-fn getRepository(use_memory: bool, allocator: Allocator) Repository {
+// Return interface types from functions (implementations must outlive the interface)
+fn getRepository(use_memory: bool, in_memory: *InMemoryRepository, sql: *SqlRepository) Repository {
     if (use_memory) {
-        var repo = InMemoryRepository.init(allocator);
-        return Repository.from(&repo);
+        return Repository.from(in_memory);
     } else {
-        var repo = SqlRepository.init(allocator);
-        return Repository.from(&repo);
+        return Repository.from(sql);
     }
 }
 ```
@@ -162,7 +164,7 @@ use the interface for validation without the VTable overhead:
 ```zig
 // Generic function that accepts any Repository implementation
 fn createUser(repo: anytype, name: []const u8, email: []const u8) !User {
-    // Validate at compile time that repo implements IRepository
+    // Validate at compile time that repo implements Repository
     comptime Repository.validation.satisfiedBy(@TypeOf(repo.*));
 
     const user = User{ .id = 0, .name = name, .email = email };

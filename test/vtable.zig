@@ -16,7 +16,7 @@ const BufferWriter = struct {
 
     pub fn init(allocator: std.mem.Allocator) BufferWriter {
         return .{
-            .buffer = std.ArrayList(u8){},
+            .buffer = .empty,
             .allocator = allocator,
         };
     }
