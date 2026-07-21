@@ -308,30 +308,20 @@ fn generateVTableType(comptime methods: anytype, comptime embedded_interfaces: a
             fn add(method_field: std.builtin.Type.StructField, method_fn: anytype, field_list: []const std.builtin.Type.StructField) []const std.builtin.Type.StructField {
                 const fn_info = @typeInfo(method_fn).@"fn";
 
-                // Build parameter list: insert *anyopaque as first param (implicit self)
-                var params: [fn_info.params.len + 1]std.builtin.Type.Fn.Param = undefined;
-                params[0] = .{
-                    .is_generic = false,
-                    .is_noalias = false,
-                    .type = *anyopaque,
-                };
-
-                // Copy all interface parameters after the implicit self
+                // Build parameter type list: insert *anyopaque as first param (implicit self)
+                var param_types: [fn_info.params.len + 1]type = undefined;
+                param_types[0] = *anyopaque;
                 for (fn_info.params, 1..) |param, i| {
-                    params[i] = param;
+                    param_types[i] = param.type.?;
                 }
 
-                // Create function pointer type
-                const FnType = @Type(.{
-                    .@"fn" = .{
-                        .calling_convention = fn_info.calling_convention,
-                        .is_generic = false,
-                        .is_var_args = false,
-                        .return_type = fn_info.return_type,
-                        .params = &params,
-                    },
-                });
-
+                // Create function pointer type (Zig 0.16+: @Fn replaces @Type(.@"fn"))
+                const FnType = @Fn(
+                    &param_types,
+                    &@splat(.{}),
+                    fn_info.return_type.?,
+                    .{ .@"callconv" = fn_info.calling_convention },
+                );
                 const FnPtrType = *const FnType;
 
                 // Add field to VTable
@@ -382,15 +372,20 @@ fn generateVTableType(comptime methods: anytype, comptime embedded_interfaces: a
             }
         }
 
-        // Create the VTable struct type
-        return @Type(.{
-            .@"struct" = .{
-                .layout = .auto,
-                .fields = fields,
-                .decls = &.{},
-                .is_tuple = false,
-            },
-        });
+        // Create the VTable struct type (Zig 0.16+: @Struct replaces @Type(.@"struct"))
+        var field_names: [fields.len][]const u8 = undefined;
+        var field_types: [fields.len]type = undefined;
+        var field_attrs: [fields.len]std.builtin.Type.StructField.Attributes = undefined;
+        for (fields, 0..) |field, i| {
+            field_names[i] = field.name;
+            field_types[i] = field.type;
+            field_attrs[i] = .{
+                .@"comptime" = field.is_comptime,
+                .@"align" = field.alignment,
+                .default_value_ptr = field.default_value_ptr,
+            };
+        }
+        return @Struct(.auto, null, &field_names, &field_types, &field_attrs);
     }
 }
 
@@ -502,7 +497,7 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
                     for (std.meta.fields(Embeds)) |embed_field| {
                         const embed = @field(embedded_interfaces, embed_field.name);
                         if (embed.validation.hasMethod(method_name)) {
-                            interfaces[index] = @typeName(@TypeOf(embed));
+                            interfaces[index] = @typeName(embed);
                             index += 1;
                         }
                     }
@@ -538,21 +533,40 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
             const exp_info = @typeInfo(Expected);
             const act_info = @typeInfo(Actual);
 
+            // Non-error-union returns: use structural compatibility (same as params)
             if (exp_info != .error_union or act_info != .error_union) {
-                return Expected == Actual;
+                return isTypeCompatible(Expected, Actual);
             }
 
-            // Any error union in the interface accepts any error set in the implementation
-            return exp_info.error_union.payload == act_info.error_union.payload;
+            // Payload must be structurally compatible. Interface `anyerror` accepts any
+            // implementation error set; otherwise require an identical error set.
+            if (!isTypeCompatible(exp_info.error_union.payload, act_info.error_union.payload)) {
+                return false;
+            }
+            const exp_set = exp_info.error_union.error_set;
+            const act_set = act_info.error_union.error_set;
+            return exp_set == anyerror or exp_set == act_set;
         }
 
+        /// Returns interface mismatches for `ImplType`. Must be evaluated at comptime.
         pub fn incompatibilities(comptime ImplType: type) []const Incompatibility {
-            comptime {
+            return comptime blk: {
                 var problems: []const Incompatibility = &.{};
 
                 // First check for method ambiguity across all interfaces
+                var reported_ambiguous: []const []const u8 = &.{};
                 for (collectMethodNames()) |method_name| {
+                    var already_reported = false;
+                    for (reported_ambiguous) |seen| {
+                        if (std.mem.eql(u8, seen, method_name)) {
+                            already_reported = true;
+                            break;
+                        }
+                    }
+                    if (already_reported) continue;
+
                     if (findMethodConflicts(method_name)) |conflicting_interfaces| {
+                        reported_ambiguous = reported_ambiguous ++ &[_][]const u8{method_name};
                         problems = problems ++ &[_]Incompatibility{.{
                             .ambiguous_method = .{
                                 .method = method_name,
@@ -563,7 +577,7 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
                 }
 
                 // If we have ambiguous methods, return early
-                if (problems.len > 0) return problems;
+                if (problems.len > 0) break :blk problems;
 
                 // Check primary interface methods
                 for (std.meta.fields(@TypeOf(methods))) |field| {
@@ -577,7 +591,15 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
                     const impl_fn = @TypeOf(@field(ImplType, field.name));
                     const expected_fn = @field(methods, field.name);
 
-                    const impl_info = @typeInfo(impl_fn).@"fn";
+                    const impl_type_info = @typeInfo(impl_fn);
+                    if (impl_type_info != .@"fn") {
+                        problems = problems ++ &[_]Incompatibility{.{
+                            .missing_method = field.name,
+                        }};
+                        continue;
+                    }
+
+                    const impl_info = impl_type_info.@"fn";
                     const expected_info = @typeInfo(expected_fn).@"fn";
 
                     // Implementation has self parameter, interface signature doesn't
@@ -627,8 +649,8 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
                     }
                 }
 
-                return problems;
-            }
+                break :blk problems;
+            };
         }
 
         fn formatIncompatibility(incompatibility: Incompatibility) []const u8 {
@@ -659,12 +681,23 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
                     formatTypeMismatch(info.expected, info.got, indent),
                 }),
 
-                .ambiguous_method => |info| std.fmt.comptimePrint("Method '{s}' is ambiguous - it appears in multiple interfaces: {s}\n" ++
-                    "   {s}Hint: This method needs to be uniquely implemented or the ambiguity resolved", .{
-                    info.method,
-                    info.interfaces,
-                    indent,
-                }),
+                .ambiguous_method => |info| blk: {
+                    // Join interface names for a readable error (cannot format []const []const u8 with {s})
+                    var joined: []const u8 = "";
+                    for (info.interfaces, 0..) |iface, i| {
+                        if (i == 0) {
+                            joined = iface;
+                        } else {
+                            joined = joined ++ ", " ++ iface;
+                        }
+                    }
+                    break :blk std.fmt.comptimePrint("Method '{s}' is ambiguous - it appears in multiple interfaces: {s}\n" ++
+                        "{s}Hint: This method needs to be uniquely implemented or the ambiguity resolved", .{
+                        info.method,
+                        joined,
+                        indent,
+                    });
+                },
             };
         }
 

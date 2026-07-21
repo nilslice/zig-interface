@@ -74,7 +74,7 @@ const StateManager = struct {
 
     pub fn init(allocator: std.mem.Allocator) StateManager {
         return .{
-            .stack = std.ArrayList(State){},
+            .stack = .empty,
             .allocator = allocator,
         };
     }
