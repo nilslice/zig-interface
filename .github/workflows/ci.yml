@@ -11,6 +11,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        # Requires Zig 0.17+. Builds against 0.16 or 0.15 should use a pinned compatible release.
         zig-version: ["0.17.0"]
 
     steps:
