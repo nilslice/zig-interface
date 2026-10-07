@@ -62,20 +62,22 @@ pub fn Interface(comptime methods: anytype, comptime embedded: anytype) type {
 
             // Generate a unique wrapper struct with static VTable for this ImplType
             const gen = struct {
-                fn generateWrapperForField(comptime T: type, comptime vtable_field: std.builtin.Type.StructField) *const anyopaque {
+                fn generateWrapperForField(comptime T: type, comptime method_name: [:0]const u8, comptime fn_ptr_type: type) *const anyopaque {
                     // Extract function signature from vtable field
-                    const fn_ptr_info = @typeInfo(vtable_field.type);
+                    const fn_ptr_info = @typeInfo(fn_ptr_type);
                     const fn_info = @typeInfo(fn_ptr_info.pointer.child).@"fn";
-                    const method_name = vtable_field.name;
+                    const param_types = fn_info.param_types;
+                    const cc = fn_info.attrs.@"callconv";
+                    const Ret = fn_info.return_type.?;
 
                     // Check if the implementation method expects *T or T
                     const impl_method_info = @typeInfo(@TypeOf(@field(T, method_name)));
                     const impl_fn_info = impl_method_info.@"fn";
-                    const first_param_info = @typeInfo(impl_fn_info.params[0].type.?);
+                    const first_param_info = @typeInfo(impl_fn_info.param_types[0].?);
                     const expects_pointer = first_param_info == .pointer;
 
                     // Generate wrapper matching the exact signature
-                    const param_count = fn_info.params.len;
+                    const param_count = param_types.len;
                     if (param_count < 1 or param_count > 5) {
                         @compileError("Method '" ++ method_name ++ "' has too many parameters. Only 1-5 parameters (including self pointer) are supported.");
                     }
@@ -84,31 +86,31 @@ pub fn Interface(comptime methods: anytype, comptime embedded: anytype) type {
                     if (expects_pointer) {
                         return switch (param_count) {
                             1 => &struct {
-                                fn wrapper(ptr: *anyopaque) callconv(fn_info.calling_convention) fn_info.return_type.? {
+                                fn wrapper(ptr: *anyopaque) callconv(cc) Ret {
                                     const self: *T = @ptrCast(@alignCast(ptr));
                                     return @field(T, method_name)(self);
                                 }
                             }.wrapper,
                             2 => &struct {
-                                fn wrapper(ptr: *anyopaque, p1: fn_info.params[1].type.?) callconv(fn_info.calling_convention) fn_info.return_type.? {
+                                fn wrapper(ptr: *anyopaque, p1: param_types[1].?) callconv(cc) Ret {
                                     const self: *T = @ptrCast(@alignCast(ptr));
                                     return @field(T, method_name)(self, p1);
                                 }
                             }.wrapper,
                             3 => &struct {
-                                fn wrapper(ptr: *anyopaque, p1: fn_info.params[1].type.?, p2: fn_info.params[2].type.?) callconv(fn_info.calling_convention) fn_info.return_type.? {
+                                fn wrapper(ptr: *anyopaque, p1: param_types[1].?, p2: param_types[2].?) callconv(cc) Ret {
                                     const self: *T = @ptrCast(@alignCast(ptr));
                                     return @field(T, method_name)(self, p1, p2);
                                 }
                             }.wrapper,
                             4 => &struct {
-                                fn wrapper(ptr: *anyopaque, p1: fn_info.params[1].type.?, p2: fn_info.params[2].type.?, p3: fn_info.params[3].type.?) callconv(fn_info.calling_convention) fn_info.return_type.? {
+                                fn wrapper(ptr: *anyopaque, p1: param_types[1].?, p2: param_types[2].?, p3: param_types[3].?) callconv(cc) Ret {
                                     const self: *T = @ptrCast(@alignCast(ptr));
                                     return @field(T, method_name)(self, p1, p2, p3);
                                 }
                             }.wrapper,
                             5 => &struct {
-                                fn wrapper(ptr: *anyopaque, p1: fn_info.params[1].type.?, p2: fn_info.params[2].type.?, p3: fn_info.params[3].type.?, p4: fn_info.params[4].type.?) callconv(fn_info.calling_convention) fn_info.return_type.? {
+                                fn wrapper(ptr: *anyopaque, p1: param_types[1].?, p2: param_types[2].?, p3: param_types[3].?, p4: param_types[4].?) callconv(cc) Ret {
                                     const self: *T = @ptrCast(@alignCast(ptr));
                                     return @field(T, method_name)(self, p1, p2, p3, p4);
                                 }
@@ -118,31 +120,31 @@ pub fn Interface(comptime methods: anytype, comptime embedded: anytype) type {
                     } else {
                         return switch (param_count) {
                             1 => &struct {
-                                fn wrapper(ptr: *anyopaque) callconv(fn_info.calling_convention) fn_info.return_type.? {
+                                fn wrapper(ptr: *anyopaque) callconv(cc) Ret {
                                     const self: *T = @ptrCast(@alignCast(ptr));
                                     return @field(T, method_name)(self.*);
                                 }
                             }.wrapper,
                             2 => &struct {
-                                fn wrapper(ptr: *anyopaque, p1: fn_info.params[1].type.?) callconv(fn_info.calling_convention) fn_info.return_type.? {
+                                fn wrapper(ptr: *anyopaque, p1: param_types[1].?) callconv(cc) Ret {
                                     const self: *T = @ptrCast(@alignCast(ptr));
                                     return @field(T, method_name)(self.*, p1);
                                 }
                             }.wrapper,
                             3 => &struct {
-                                fn wrapper(ptr: *anyopaque, p1: fn_info.params[1].type.?, p2: fn_info.params[2].type.?) callconv(fn_info.calling_convention) fn_info.return_type.? {
+                                fn wrapper(ptr: *anyopaque, p1: param_types[1].?, p2: param_types[2].?) callconv(cc) Ret {
                                     const self: *T = @ptrCast(@alignCast(ptr));
                                     return @field(T, method_name)(self.*, p1, p2);
                                 }
                             }.wrapper,
                             4 => &struct {
-                                fn wrapper(ptr: *anyopaque, p1: fn_info.params[1].type.?, p2: fn_info.params[2].type.?, p3: fn_info.params[3].type.?) callconv(fn_info.calling_convention) fn_info.return_type.? {
+                                fn wrapper(ptr: *anyopaque, p1: param_types[1].?, p2: param_types[2].?, p3: param_types[3].?) callconv(cc) Ret {
                                     const self: *T = @ptrCast(@alignCast(ptr));
                                     return @field(T, method_name)(self.*, p1, p2, p3);
                                 }
                             }.wrapper,
                             5 => &struct {
-                                fn wrapper(ptr: *anyopaque, p1: fn_info.params[1].type.?, p2: fn_info.params[2].type.?, p3: fn_info.params[3].type.?, p4: fn_info.params[4].type.?) callconv(fn_info.calling_convention) fn_info.return_type.? {
+                                fn wrapper(ptr: *anyopaque, p1: param_types[1].?, p2: param_types[2].?, p3: param_types[3].?, p4: param_types[4].?) callconv(cc) Ret {
                                     const self: *T = @ptrCast(@alignCast(ptr));
                                     return @field(T, method_name)(self.*, p1, p2, p3, p4);
                                 }
@@ -155,9 +157,10 @@ pub fn Interface(comptime methods: anytype, comptime embedded: anytype) type {
                 const vtable: VTableType = blk: {
                     var result: VTableType = undefined;
                     // Iterate over all VTable fields (includes embedded interface methods)
-                    for (std.meta.fields(VTableType)) |vtable_field| {
-                        const wrapper_ptr = generateWrapperForField(ImplType, vtable_field);
-                        @field(result, vtable_field.name) = @ptrCast(@alignCast(wrapper_ptr));
+                    const vtable_info = @typeInfo(VTableType).@"struct";
+                    for (vtable_info.field_names, vtable_info.field_types) |field_name, field_type| {
+                        const wrapper_ptr = generateWrapperForField(ImplType, field_name, field_type);
+                        @field(result, field_name) = @ptrCast(@alignCast(wrapper_ptr));
                     }
                     break :blk result;
                 };
@@ -180,27 +183,27 @@ fn isTypeCompatible(comptime T1: type, comptime T2: type) bool {
     if (T1 == T2) return true;
 
     // If type categories don't match, they're not compatible
-    if (@intFromEnum(info1) != @intFromEnum(info2)) return false;
+    if (@backingInt(info1) != @backingInt(info2)) return false;
 
     return switch (info1) {
         .@"struct" => |s1| blk: {
             const s2 = @typeInfo(T2).@"struct";
-            if (s1.fields.len != s2.fields.len) break :blk false;
+            if (s1.field_names.len != s2.field_names.len) break :blk false;
             if (s1.is_tuple != s2.is_tuple) break :blk false;
 
-            for (s1.fields, s2.fields) |f1, f2| {
-                if (!std.mem.eql(u8, f1.name, f2.name)) break :blk false;
-                if (!isTypeCompatible(f1.type, f2.type)) break :blk false;
+            for (s1.field_names, s1.field_types, s2.field_names, s2.field_types) |n1, t1, n2, t2| {
+                if (!std.mem.eql(u8, n1, n2)) break :blk false;
+                if (!isTypeCompatible(t1, t2)) break :blk false;
             }
             break :blk true;
         },
         .@"enum" => |e1| blk: {
             const e2 = @typeInfo(T2).@"enum";
-            if (e1.fields.len != e2.fields.len) break :blk false;
+            if (e1.field_names.len != e2.field_names.len) break :blk false;
 
-            for (e1.fields, e2.fields) |f1, f2| {
-                if (!std.mem.eql(u8, f1.name, f2.name)) break :blk false;
-                if (f1.value != f2.value) break :blk false;
+            for (e1.field_names, e1.field_values, e2.field_names, e2.field_values) |n1, v1, n2, v2| {
+                if (!std.mem.eql(u8, n1, n2)) break :blk false;
+                if (v1 != v2) break :blk false;
             }
             break :blk true;
         },
@@ -212,8 +215,8 @@ fn isTypeCompatible(comptime T1: type, comptime T2: type) bool {
         .pointer => |p1| blk: {
             const p2 = @typeInfo(T2).pointer;
             if (p1.size != p2.size) break :blk false;
-            if (p1.is_const != p2.is_const) break :blk false;
-            if (p1.is_volatile != p2.is_volatile) break :blk false;
+            if (p1.attrs.@"const" != p2.attrs.@"const") break :blk false;
+            if (p1.attrs.@"volatile" != p2.attrs.@"volatile") break :blk false;
             break :blk isTypeCompatible(p1.child, p2.child);
         },
         .optional => |o1| blk: {
@@ -233,7 +236,7 @@ fn generateTypeHint(comptime expected: type, comptime got: type) ?[]const u8 {
     if (exp_info == .pointer and got_info == .pointer) {
         const exp_ptr = exp_info.pointer;
         const got_ptr = got_info.pointer;
-        if (exp_ptr.is_const and !got_ptr.is_const) {
+        if (exp_ptr.attrs.@"const" and !got_ptr.attrs.@"const") {
             return "Consider making the parameter type const (e.g., []const u8 instead of []u8)";
         }
     }
@@ -255,7 +258,7 @@ fn generateTypeHint(comptime expected: type, comptime got: type) ?[]const u8 {
     if (exp_info == .@"struct" and got_info == .@"struct") {
         const exp_s = exp_info.@"struct";
         const got_s = got_info.@"struct";
-        if (exp_s.fields.len != got_s.fields.len) {
+        if (exp_s.field_names.len != got_s.field_names.len) {
             return "The structs have different numbers of fields";
         }
         // Could add more specific field comparison hints here
@@ -298,46 +301,54 @@ fn formatTypeMismatch(
     return base;
 }
 
+fn structFieldNames(comptime T: type) []const [:0]const u8 {
+    return @typeInfo(T).@"struct".field_names;
+}
+
 fn generateVTableType(comptime methods: anytype, comptime embedded_interfaces: anytype, comptime has_embeds: bool) type {
     comptime {
-        // Build array of struct fields for the VTable
-        var fields: []const std.builtin.Type.StructField = &.{};
+        const FieldAttributes = std.builtin.Type.Struct.FieldAttributes;
+        const VField = struct {
+            name: [:0]const u8,
+            type: type,
+            attrs: FieldAttributes,
+        };
+
+        var fields: []const VField = &.{};
 
         // Helper function to add a method to the VTable
         const addMethod = struct {
-            fn add(method_field: std.builtin.Type.StructField, method_fn: anytype, field_list: []const std.builtin.Type.StructField) []const std.builtin.Type.StructField {
+            fn add(method_name: [:0]const u8, method_fn: anytype, field_list: []const VField) []const VField {
                 const fn_info = @typeInfo(method_fn).@"fn";
 
                 // Build parameter type list: insert *anyopaque as first param (implicit self)
-                var param_types: [fn_info.params.len + 1]type = undefined;
+                var param_types: [fn_info.param_types.len + 1]type = undefined;
                 param_types[0] = *anyopaque;
-                for (fn_info.params, 1..) |param, i| {
-                    param_types[i] = param.type.?;
+                for (fn_info.param_types, 1..) |param_type, i| {
+                    param_types[i] = param_type.?;
                 }
 
-                // Create function pointer type (Zig 0.16+: @Fn replaces @Type(.@"fn"))
                 const FnType = @Fn(
                     &param_types,
                     &@splat(.{}),
                     fn_info.return_type.?,
-                    .{ .@"callconv" = fn_info.calling_convention },
+                    .{ .@"callconv" = fn_info.attrs.@"callconv" },
                 );
                 const FnPtrType = *const FnType;
 
-                // Add field to VTable
-                return field_list ++ &[_]std.builtin.Type.StructField{.{
-                    .name = method_field.name,
+                return field_list ++ &[_]VField{.{
+                    .name = method_name,
                     .type = FnPtrType,
-                    .default_value_ptr = null,
-                    .is_comptime = false,
-                    .alignment = @alignOf(FnPtrType),
+                    .attrs = .{
+                        .@"align" = @alignOf(FnPtrType),
+                    },
                 }};
             }
         }.add;
 
         // Helper to check if a field name already exists
         const hasField = struct {
-            fn check(field_name: []const u8, field_list: []const std.builtin.Type.StructField) bool {
+            fn check(field_name: []const u8, field_list: []const VField) bool {
                 for (field_list) |field| {
                     if (std.mem.eql(u8, field.name, field_name)) {
                         return true;
@@ -349,41 +360,38 @@ fn generateVTableType(comptime methods: anytype, comptime embedded_interfaces: a
 
         // Add methods from embedded interfaces first
         if (has_embeds) {
-            const Embeds = @TypeOf(embedded_interfaces);
-            for (std.meta.fields(Embeds)) |embed_field| {
-                const embed = @field(embedded_interfaces, embed_field.name);
-                // Recursively get the VTable type from the embedded interface
-                const EmbedVTable = embed.VTable;
-                for (std.meta.fields(EmbedVTable)) |vtable_field| {
+            for (structFieldNames(@TypeOf(embedded_interfaces))) |embed_name| {
+                const embed = @field(embedded_interfaces, embed_name);
+                const embed_info = @typeInfo(embed.VTable).@"struct";
+                for (embed_info.field_names, embed_info.field_types, embed_info.field_attrs) |name, field_type, attrs| {
                     // Skip if we already have this field (indicates a conflict that validation should catch)
-                    if (!hasField(vtable_field.name, fields)) {
-                        fields = fields ++ &[_]std.builtin.Type.StructField{vtable_field};
+                    if (!hasField(name, fields)) {
+                        fields = fields ++ &[_]VField{.{
+                            .name = name,
+                            .type = field_type,
+                            .attrs = attrs,
+                        }};
                     }
                 }
             }
         }
 
         // Add methods from primary interface
-        for (std.meta.fields(@TypeOf(methods))) |method_field| {
-            const method_fn = @field(methods, method_field.name);
+        for (structFieldNames(@TypeOf(methods))) |method_name| {
+            const method_fn = @field(methods, method_name);
             // Only add if not already present from embedded interfaces
-            if (!hasField(method_field.name, fields)) {
-                fields = addMethod(method_field, method_fn, fields);
+            if (!hasField(method_name, fields)) {
+                fields = addMethod(method_name, method_fn, fields);
             }
         }
 
-        // Create the VTable struct type (Zig 0.16+: @Struct replaces @Type(.@"struct"))
         var field_names: [fields.len][]const u8 = undefined;
         var field_types: [fields.len]type = undefined;
-        var field_attrs: [fields.len]std.builtin.Type.StructField.Attributes = undefined;
+        var field_attrs: [fields.len]FieldAttributes = undefined;
         for (fields, 0..) |field, i| {
             field_names[i] = field.name;
             field_types[i] = field.type;
-            field_attrs[i] = .{
-                .@"comptime" = field.is_comptime,
-                .@"align" = field.alignment,
-                .default_value_ptr = field.default_value_ptr,
-            };
+            field_attrs[i] = field.attrs;
         }
         return @Struct(.auto, null, &field_names, &field_types, &field_attrs);
     }
@@ -422,17 +430,12 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
         /// Collects all method names from this interface and its embedded interfaces
         fn collectMethodNames() []const []const u8 {
             comptime {
-                var method_count: usize = 0;
-
-                // Count methods from primary interface
-                for (std.meta.fields(Methods)) |_| {
-                    method_count += 1;
-                }
+                var method_count: usize = structFieldNames(Methods).len;
 
                 // Count methods from embedded interfaces
                 if (has_embeds) {
-                    for (std.meta.fields(Embeds)) |embed_field| {
-                        const embed = @field(embedded_interfaces, embed_field.name);
+                    for (structFieldNames(Embeds)) |embed_name| {
+                        const embed = @field(embedded_interfaces, embed_name);
                         method_count += embed.validation.collectMethodNames().len;
                     }
                 }
@@ -442,15 +445,15 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
                 var index: usize = 0;
 
                 // Add primary interface methods
-                for (std.meta.fields(Methods)) |field| {
-                    names[index] = field.name;
+                for (structFieldNames(Methods)) |name| {
+                    names[index] = name;
                     index += 1;
                 }
 
                 // Add embedded interface methods
                 if (has_embeds) {
-                    for (std.meta.fields(Embeds)) |embed_field| {
-                        const embed = @field(embedded_interfaces, embed_field.name);
+                    for (structFieldNames(Embeds)) |embed_name| {
+                        const embed = @field(embedded_interfaces, embed_name);
                         const embed_methods = embed.validation.collectMethodNames();
                         @memcpy(names[index..][0..embed_methods.len], embed_methods);
                         index += embed_methods.len;
@@ -473,8 +476,8 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
 
                 // Count embedded interfaces
                 if (has_embeds) {
-                    for (std.meta.fields(Embeds)) |embed_field| {
-                        const embed = @field(embedded_interfaces, embed_field.name);
+                    for (structFieldNames(Embeds)) |embed_name| {
+                        const embed = @field(embedded_interfaces, embed_name);
                         if (embed.validation.hasMethod(method_name)) {
                             interface_count += 1;
                         }
@@ -494,8 +497,8 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
 
                 // Add embedded interfaces
                 if (has_embeds) {
-                    for (std.meta.fields(Embeds)) |embed_field| {
-                        const embed = @field(embedded_interfaces, embed_field.name);
+                    for (structFieldNames(Embeds)) |embed_name| {
+                        const embed = @field(embedded_interfaces, embed_name);
                         if (embed.validation.hasMethod(method_name)) {
                             interfaces[index] = @typeName(embed);
                             index += 1;
@@ -517,8 +520,8 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
 
                 // Check embedded interfaces
                 if (has_embeds) {
-                    for (std.meta.fields(Embeds)) |embed_field| {
-                        const embed = @field(embedded_interfaces, embed_field.name);
+                    for (structFieldNames(Embeds)) |embed_name| {
+                        const embed = @field(embedded_interfaces, embed_name);
                         if (embed.validation.hasMethod(method_name)) {
                             return true;
                         }
@@ -580,21 +583,21 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
                 if (problems.len > 0) break :blk problems;
 
                 // Check primary interface methods
-                for (std.meta.fields(@TypeOf(methods))) |field| {
-                    if (!@hasDecl(ImplType, field.name)) {
+                for (structFieldNames(@TypeOf(methods))) |name| {
+                    if (!@hasDecl(ImplType, name)) {
                         problems = problems ++ &[_]Incompatibility{.{
-                            .missing_method = field.name,
+                            .missing_method = name,
                         }};
                         continue;
                     }
 
-                    const impl_fn = @TypeOf(@field(ImplType, field.name));
-                    const expected_fn = @field(methods, field.name);
+                    const impl_fn = @TypeOf(@field(ImplType, name));
+                    const expected_fn = @field(methods, name);
 
                     const impl_type_info = @typeInfo(impl_fn);
                     if (impl_type_info != .@"fn") {
                         problems = problems ++ &[_]Incompatibility{.{
-                            .missing_method = field.name,
+                            .missing_method = name,
                         }};
                         continue;
                     }
@@ -603,26 +606,26 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
                     const expected_info = @typeInfo(expected_fn).@"fn";
 
                     // Implementation has self parameter, interface signature doesn't
-                    const expected_param_count = expected_info.params.len + 1;
+                    const expected_param_count = expected_info.param_types.len + 1;
 
-                    if (impl_info.params.len != expected_param_count) {
+                    if (impl_info.param_types.len != expected_param_count) {
                         problems = problems ++ &[_]Incompatibility{.{
                             .wrong_param_count = .{
-                                .method = field.name,
+                                .method = name,
                                 .expected = expected_param_count,
-                                .got = impl_info.params.len,
+                                .got = impl_info.param_types.len,
                             },
                         }};
                     } else {
                         // Compare impl params[1..] (skip self) with interface params[0..]
-                        for (impl_info.params[1..], expected_info.params, 0..) |impl_param, expected_param, i| {
-                            if (!isTypeCompatible(impl_param.type.?, expected_param.type.?)) {
+                        for (impl_info.param_types[1..], expected_info.param_types, 0..) |impl_param, expected_param, i| {
+                            if (!isTypeCompatible(impl_param.?, expected_param.?)) {
                                 problems = problems ++ &[_]Incompatibility{.{
                                     .param_type_mismatch = .{
-                                        .method = field.name,
+                                        .method = name,
                                         .param_index = i + 1,
-                                        .expected = expected_param.type.?,
-                                        .got = impl_param.type.?,
+                                        .expected = expected_param.?,
+                                        .got = impl_param.?,
                                     },
                                 }};
                             }
@@ -632,7 +635,7 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
                     if (!isCompatibleErrorSet(expected_info.return_type.?, impl_info.return_type.?)) {
                         problems = problems ++ &[_]Incompatibility{.{
                             .return_type_mismatch = .{
-                                .method = field.name,
+                                .method = name,
                                 .expected = expected_info.return_type.?,
                                 .got = impl_info.return_type.?,
                             },
@@ -642,8 +645,8 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
 
                 // Check embedded interfaces
                 if (has_embeds) {
-                    for (std.meta.fields(@TypeOf(embedded_interfaces))) |embed_field| {
-                        const embed = @field(embedded_interfaces, embed_field.name);
+                    for (structFieldNames(@TypeOf(embedded_interfaces))) |embed_name| {
+                        const embed = @field(embedded_interfaces, embed_name);
                         const embed_problems = embed.validation.incompatibilities(ImplType);
                         problems = problems ++ embed_problems;
                     }
@@ -654,7 +657,7 @@ fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interf
         }
 
         fn formatIncompatibility(incompatibility: Incompatibility) []const u8 {
-            const indent = if (builtin.os.tag == .windows) "   \\- " else "   └─ ";
+            const indent = if (builtin.target.os.tag == .windows) "   \\- " else "   └─ ";
             return switch (incompatibility) {
                 .missing_method => |method| std.fmt.comptimePrint("Missing required method: {s}\n{s}Add the method with the correct signature to your implementation", .{ method, indent }),
 

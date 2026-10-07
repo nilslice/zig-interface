@@ -3,7 +3,7 @@
 A comprehensive interface system for Zig supporting both **compile-time
 validation** and **runtime polymorphism** through VTable generation.
 
-> **Requires Zig 0.16+.** Older Zig versions should depend on a tagged 0.15-compatible release.
+> **Requires Zig 0.17+.** Older Zig versions should depend on a tagged release for that compiler.
 
 ## Features
 
