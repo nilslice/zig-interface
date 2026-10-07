@@ -38,10 +38,10 @@ const BufferWriter = struct {
 test "vtable interface type generation" {
     // Verify the interface type was created
     const VTableType = Writer.VTable;
-    const vtable_fields = std.meta.fields(VTableType);
+    const vtable_fields = @typeInfo(VTableType).@"struct".field_names;
 
     try std.testing.expectEqual(@as(usize, 1), vtable_fields.len);
-    try std.testing.expectEqualStrings("write", vtable_fields[0].name);
+    try std.testing.expectEqualStrings("write", vtable_fields[0]);
 }
 
 test "vtable interface runtime usage with from()" {
