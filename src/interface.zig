@@ -10,8 +10,11 @@ pub fn Interface(comptime methods: anytype, comptime embedded: anytype) type {
 
     const has_embeds = @TypeOf(embedded_interfaces) != @TypeOf(null);
 
-    // Generate VTable type with function pointers
-    const VTableType = generateVTableType(methods, embedded_interfaces, has_embeds);
+    // Field names and pointer types come from the spec (and from embedded
+    // interfaces' own spec arrays). The vtable struct is built from those
+    // arrays once; later embedding reads the arrays, not the struct.
+    const built = buildVTable(methods, embedded_interfaces, has_embeds);
+    const VTableType = built.Type;
 
     // Create the validation namespace
     const ValidationNamespace = CreateValidationNamespace(methods, embedded_interfaces, has_embeds);
@@ -22,6 +25,8 @@ pub fn Interface(comptime methods: anytype, comptime embedded: anytype) type {
         vtable: *const VTableType,
 
         pub const VTable = VTableType;
+        pub const vtable_field_names = built.names;
+        pub const vtable_field_types = built.types;
         pub const validation = ValidationNamespace;
 
         /// Creates an interface wrapper from an implementation pointer and vtable.
@@ -156,9 +161,8 @@ pub fn Interface(comptime methods: anytype, comptime embedded: anytype) type {
 
                 const vtable: VTableType = blk: {
                     var result: VTableType = undefined;
-                    // Iterate over all VTable fields (includes embedded interface methods)
-                    const vtable_info = @typeInfo(VTableType).@"struct";
-                    for (vtable_info.field_names, vtable_info.field_types) |field_name, field_type| {
+                    // Same arrays that built the vtable, including embedded methods.
+                    for (vtable_field_names, vtable_field_types) |field_name, field_type| {
                         const wrapper_ptr = generateWrapperForField(ImplType, field_name, field_type);
                         @field(result, field_name) = @ptrCast(@alignCast(wrapper_ptr));
                     }
@@ -305,96 +309,90 @@ fn structFieldNames(comptime T: type) []const [:0]const u8 {
     return @typeInfo(T).@"struct".field_names;
 }
 
-fn generateVTableType(comptime methods: anytype, comptime embedded_interfaces: anytype, comptime has_embeds: bool) type {
-    comptime {
-        const FieldAttributes = std.builtin.Type.Struct.FieldAttributes;
-        const VField = struct {
-            name: [:0]const u8,
-            type: type,
-            attrs: FieldAttributes,
-        };
+const VTableBuild = struct {
+    Type: type,
+    names: []const [:0]const u8,
+    types: []const type,
+};
 
-        var fields: []const VField = &.{};
+fn vtableFnPtrType(comptime method_fn: anytype) type {
+    const fn_info = @typeInfo(method_fn).@"fn";
 
-        // Helper function to add a method to the VTable
-        const addMethod = struct {
-            fn add(method_name: [:0]const u8, method_fn: anytype, field_list: []const VField) []const VField {
-                const fn_info = @typeInfo(method_fn).@"fn";
-
-                // Build parameter type list: insert *anyopaque as first param (implicit self)
-                var param_types: [fn_info.param_types.len + 1]type = undefined;
-                param_types[0] = *anyopaque;
-                for (fn_info.param_types, 1..) |param_type, i| {
-                    param_types[i] = param_type.?;
-                }
-
-                const FnType = @Fn(
-                    &param_types,
-                    &@splat(.{}),
-                    fn_info.return_type.?,
-                    .{ .@"callconv" = fn_info.attrs.@"callconv" },
-                );
-                const FnPtrType = *const FnType;
-
-                return field_list ++ &[_]VField{.{
-                    .name = method_name,
-                    .type = FnPtrType,
-                    .attrs = .{
-                        .@"align" = @alignOf(FnPtrType),
-                    },
-                }};
-            }
-        }.add;
-
-        // Helper to check if a field name already exists
-        const hasField = struct {
-            fn check(field_name: []const u8, field_list: []const VField) bool {
-                for (field_list) |field| {
-                    if (std.mem.eql(u8, field.name, field_name)) {
-                        return true;
-                    }
-                }
-                return false;
-            }
-        }.check;
-
-        // Add methods from embedded interfaces first
-        if (has_embeds) {
-            for (structFieldNames(@TypeOf(embedded_interfaces))) |embed_name| {
-                const embed = @field(embedded_interfaces, embed_name);
-                const embed_info = @typeInfo(embed.VTable).@"struct";
-                for (embed_info.field_names, embed_info.field_types, embed_info.field_attrs) |name, field_type, attrs| {
-                    // Skip if we already have this field (indicates a conflict that validation should catch)
-                    if (!hasField(name, fields)) {
-                        fields = fields ++ &[_]VField{.{
-                            .name = name,
-                            .type = field_type,
-                            .attrs = attrs,
-                        }};
-                    }
-                }
-            }
-        }
-
-        // Add methods from primary interface
-        for (structFieldNames(@TypeOf(methods))) |method_name| {
-            const method_fn = @field(methods, method_name);
-            // Only add if not already present from embedded interfaces
-            if (!hasField(method_name, fields)) {
-                fields = addMethod(method_name, method_fn, fields);
-            }
-        }
-
-        var field_names: [fields.len][]const u8 = undefined;
-        var field_types: [fields.len]type = undefined;
-        var field_attrs: [fields.len]FieldAttributes = undefined;
-        for (fields, 0..) |field, i| {
-            field_names[i] = field.name;
-            field_types[i] = field.type;
-            field_attrs[i] = field.attrs;
-        }
-        return @Struct(.auto, null, &field_names, &field_types, &field_attrs);
+    // Insert *anyopaque as the first parameter (implicit self).
+    var param_types: [fn_info.param_types.len + 1]type = undefined;
+    param_types[0] = *anyopaque;
+    for (fn_info.param_types, 1..) |param_type, i| {
+        param_types[i] = param_type.?;
     }
+
+    const FnType = @Fn(
+        &param_types,
+        &@splat(.{}),
+        fn_info.return_type.?,
+        .{ .@"callconv" = fn_info.attrs.@"callconv" },
+    );
+    return *const FnType;
+}
+
+fn buildVTable(comptime methods: anytype, comptime embedded_interfaces: anytype, comptime has_embeds: bool) VTableBuild {
+    const Entry = struct {
+        name: [:0]const u8,
+        type: type,
+    };
+
+    var fields: []const Entry = &.{};
+
+    const hasName = struct {
+        fn check(field_name: []const u8, field_list: []const Entry) bool {
+            for (field_list) |field| {
+                if (std.mem.eql(u8, field.name, field_name)) return true;
+            }
+            return false;
+        }
+    }.check;
+
+    // Embedded interfaces already flattened their own specs into these arrays.
+    if (has_embeds) {
+        for (structFieldNames(@TypeOf(embedded_interfaces))) |embed_name| {
+            const embed = @field(embedded_interfaces, embed_name);
+            for (embed.vtable_field_names, embed.vtable_field_types) |name, field_type| {
+                // Skip duplicates. Validation reports the ambiguity separately.
+                if (!hasName(name, fields)) {
+                    fields = fields ++ &[_]Entry{.{ .name = name, .type = field_type }};
+                }
+            }
+        }
+    }
+
+    for (structFieldNames(@TypeOf(methods))) |method_name| {
+        if (!hasName(method_name, fields)) {
+            fields = fields ++ &[_]Entry{.{
+                .name = method_name,
+                .type = vtableFnPtrType(@field(methods, method_name)),
+            }};
+        }
+    }
+
+    var names: [fields.len][:0]const u8 = undefined;
+    var types: [fields.len]type = undefined;
+    var struct_names: [fields.len][]const u8 = undefined;
+    var struct_types: [fields.len]type = undefined;
+    var struct_attrs: [fields.len]std.builtin.Type.Struct.FieldAttributes = undefined;
+    for (fields, 0..) |field, i| {
+        names[i] = field.name;
+        types[i] = field.type;
+        struct_names[i] = field.name;
+        struct_types[i] = field.type;
+        struct_attrs[i] = .{ .@"align" = @alignOf(field.type) };
+    }
+
+    const frozen_names = names;
+    const frozen_types = types;
+    return .{
+        .Type = @Struct(.auto, null, &struct_names, &struct_types, &struct_attrs),
+        .names = &frozen_names,
+        .types = &frozen_types,
+    };
 }
 
 fn CreateValidationNamespace(comptime methods: anytype, comptime embedded_interfaces: anytype, comptime has_embeds: bool) type {
